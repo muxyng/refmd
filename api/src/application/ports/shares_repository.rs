@@ -58,6 +58,8 @@ pub trait SharesRepository: Send + Sync {
         )>,
     >; // (share_id, permission, expires_at, shared_id, shared_type)
 
+    async fn get_document_owner_by_token(&self, token: &str) -> anyhow::Result<Option<Uuid>>;
+
     async fn list_subtree_nodes(
         &self,
         root_id: Uuid,

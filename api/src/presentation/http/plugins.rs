@@ -622,6 +622,25 @@ pub async fn get_manifest(
     let store = ctx.plugin_assets();
     let mut items: Vec<ManifestItem> = Vec::new();
 
+    let mut user_scope_owner: Option<Uuid> = match &actor {
+        access::Actor::User(user_id) => Some(*user_id),
+        _ => None,
+    };
+
+    if user_scope_owner.is_none() {
+        if let access::Actor::ShareToken(token_str) = &actor {
+            let share_repo = ctx.shares_repo();
+            match share_repo.get_document_owner_by_token(token_str).await {
+                Ok(owner) => {
+                    user_scope_owner = owner;
+                }
+                Err(err) => {
+                    tracing::warn!(token = %token_str, error = ?err, "share_owner_lookup_failed");
+                }
+            }
+        }
+    }
+
     let global_plugins = store
         .list_latest_global_manifests()
         .await
@@ -638,7 +657,7 @@ pub async fn get_manifest(
         }
     }
 
-    if let access::Actor::User(user_id) = actor {
+    if let Some(user_id) = user_scope_owner {
         let installation_repo = ctx.plugin_installations();
         let installs = installation_repo
             .list_for_user(user_id)

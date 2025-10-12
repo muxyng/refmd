@@ -244,6 +244,16 @@ impl SharesRepository for SqlxSharesRepository {
         self.fetch_share_resolution(token).await
     }
 
+    async fn get_document_owner_by_token(&self, token: &str) -> anyhow::Result<Option<Uuid>> {
+        let owner = sqlx::query_scalar::<_, Uuid>(
+            "SELECT d.owner_id FROM shares s JOIN documents d ON d.id = s.document_id WHERE s.token = $1",
+        )
+        .bind(token)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(owner)
+    }
+
     async fn list_subtree_nodes(
         &self,
         root_id: Uuid,
