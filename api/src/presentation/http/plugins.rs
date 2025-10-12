@@ -617,6 +617,20 @@ async fn resolve_plugin_owner_id(
     }
 }
 
+fn extract_doc_id(value: &serde_json::Value) -> Option<Uuid> {
+    value
+        .get("docId")
+        .and_then(|v| v.as_str())
+        .and_then(|s| Uuid::parse_str(s).ok())
+        .or_else(|| {
+            value
+                .get("payload")
+                .and_then(|payload| payload.get("docId"))
+                .and_then(|v| v.as_str())
+                .and_then(|s| Uuid::parse_str(s).ok())
+        })
+}
+
 #[utoipa::path(
     get,
     path = "/api/me/plugins/manifest",
@@ -708,20 +722,52 @@ pub struct ExecBody {
     post,
     path = "/api/plugins/{plugin}/exec/{action}",
     request_body = ExecBody,
-    params(("plugin" = String, Path, description = "Plugin ID"), ("action" = String, Path, description = "Action")),
+    params(
+        ("plugin" = String, Path, description = "Plugin ID"),
+        ("action" = String, Path, description = "Action"),
+        ("token" = Option<String>, Query, description = "Share token")
+    ),
     responses((status = 200, body = ExecResultResponse)),
     tag = "Plugins",
     operation_id = "pluginsExecAction"
 )]
 pub async fn exec_action(
     State(ctx): State<AppContext>,
-    bearer: Bearer,
+    bearer: Option<Bearer>,
+    Query(params): Query<HashMap<String, String>>,
     Path((plugin, action)): Path<(String, String)>,
     Json(body): Json<ExecBody>,
 ) -> Result<Json<ExecResultResponse>, StatusCode> {
     ensure_valid_plugin_id(&plugin)?;
-    let sub = crate::presentation::http::auth::validate_bearer_public(&ctx.cfg, bearer)?;
-    let user_id = Uuid::parse_str(&sub).map_err(|_| StatusCode::UNAUTHORIZED)?;
+    let token = params.get("token").map(|s| s.as_str());
+    let actor =
+        auth::resolve_actor_from_parts(&ctx.cfg, bearer, token).ok_or(StatusCode::UNAUTHORIZED)?;
+
+    let owner_user_id = resolve_plugin_owner_id(&ctx, &actor, token)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::FORBIDDEN)?;
+
+    if let access::Actor::ShareToken(_) = actor {
+        if let Some(payload) = body.payload.as_ref() {
+            if let Some(doc_id) = extract_doc_id(payload) {
+                let share_access = ctx.share_access_port();
+                let access_repo = ctx.access_repo();
+                access::require_edit(
+                    access_repo.as_ref(),
+                    share_access.as_ref(),
+                    &actor,
+                    doc_id,
+                )
+                .await
+                .map_err(|_| StatusCode::FORBIDDEN)?;
+            } else {
+                return Err(StatusCode::FORBIDDEN);
+            }
+        } else {
+            return Err(StatusCode::FORBIDDEN);
+        }
+    }
 
     let plugin_repo = ctx.plugin_repo();
     let document_repo = ctx.document_repo();
@@ -733,7 +779,7 @@ pub async fn exec_action(
     };
 
     match exec_uc
-        .execute(user_id, &plugin, &action, body.payload.clone())
+        .execute(owner_user_id, &plugin, &action, body.payload.clone())
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     {

@@ -267,6 +267,7 @@ export class PluginsService {
         plugin,
         action,
         requestBody,
+        token,
     }: {
         /**
          * Plugin ID
@@ -277,6 +278,10 @@ export class PluginsService {
          */
         action: string,
         requestBody: ExecBody,
+        /**
+         * Share token
+         */
+        token?: string | null,
     }): CancelablePromise<ExecResultResponse> {
         return __request(OpenAPI, {
             method: 'POST',
@@ -284,6 +289,9 @@ export class PluginsService {
             path: {
                 'plugin': plugin,
                 'action': action,
+            },
+            query: {
+                'token': token,
             },
             body: requestBody,
             mediaType: 'application/json',

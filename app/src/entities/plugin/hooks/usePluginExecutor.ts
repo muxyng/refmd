@@ -167,7 +167,7 @@ export function usePluginExecutor({
             },
             api: {
               exec: (actionName: string, payload: any) =>
-                execPluginAction(pluginId, actionName, payload),
+                execPluginAction(pluginId, actionName, payload, shareToken ?? undefined),
             },
           }
 
@@ -199,13 +199,18 @@ export function usePluginExecutor({
           return
         }
 
-        let response = await execPluginAction(pluginId, action, defaultPayload)
+        let response = await execPluginAction(pluginId, action, defaultPayload, shareToken ?? undefined)
         const errCode = (response as any)?.error?.code
         const errMsg = String((response as any)?.error?.message || '')
         if (errCode === 'BAD_REQUEST' && errMsg.toLowerCase().includes('docid')) {
           const input = await resolveRequestDocumentId()
           if (input) {
-            response = await execPluginAction(pluginId, action, { ...(defaultPayload || {}), docId: input })
+            response = await execPluginAction(
+              pluginId,
+              action,
+              { ...(defaultPayload || {}), docId: input },
+              shareToken ?? undefined,
+            )
           } else {
             toast.error('Select a document before running this command')
             return

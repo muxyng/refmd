@@ -122,6 +122,7 @@ export async function createPluginHost(manifest: ManifestItem, ctx: PluginHostCo
         plugin: manifest.id,
         action,
         requestBody: { payload: args },
+        token: resolvedToken ?? undefined,
       })
       if (json?.effects) applyEffects(json.effects, performNavigate)
       return json

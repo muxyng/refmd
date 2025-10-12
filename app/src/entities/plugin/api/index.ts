@@ -21,8 +21,14 @@ export async function execPluginAction(
   pluginId: string,
   action: string,
   payload: Record<string, unknown> | undefined,
+  token?: string,
 ) {
-  return PluginsService.pluginsExecAction({ plugin: pluginId, action, requestBody: { payload } })
+  return PluginsService.pluginsExecAction({
+    plugin: pluginId,
+    action,
+    requestBody: { payload },
+    token,
+  })
 }
 
 export async function listPluginRecords(
