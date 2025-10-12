@@ -1,3 +1,4 @@
+use anyhow::Result as AnyResult;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::{
     Json, Router,
@@ -125,6 +126,10 @@ pub async fn list_records(
     .await
     .map_err(|_| StatusCode::FORBIDDEN)?;
 
+    let owner_user_id = resolve_plugin_owner_id(&ctx, &actor, token)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
     let limit = params
         .get("limit")
         .and_then(|s| s.parse::<i64>().ok())
@@ -137,13 +142,7 @@ pub async fn list_records(
         .max(0);
 
     let runtime = ctx.plugin_runtime();
-    ensure_plugin_permission(
-        &runtime,
-        actor_user_id(&actor),
-        &p.plugin,
-        PERMISSION_DOC_READ,
-    )
-    .await?;
+    ensure_plugin_permission(&runtime, owner_user_id, &p.plugin, PERMISSION_DOC_READ).await?;
 
     let repo = ctx.plugin_repo();
     let list_uc = ListPluginRecords {
@@ -210,14 +209,12 @@ pub async fn create_record(
     .await
     .map_err(|_| StatusCode::FORBIDDEN)?;
 
+    let owner_user_id = resolve_plugin_owner_id(&ctx, &actor, token)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
     let runtime = ctx.plugin_runtime();
-    ensure_plugin_permission(
-        &runtime,
-        actor_user_id(&actor),
-        &p.plugin,
-        PERMISSION_DOC_WRITE,
-    )
-    .await?;
+    ensure_plugin_permission(&runtime, owner_user_id, &p.plugin, PERMISSION_DOC_WRITE).await?;
 
     // Attach authorId and timestamps if not provided
     let mut data = body.data;
@@ -422,14 +419,12 @@ pub async fn get_kv_value(
     .await
     .map_err(|_| StatusCode::FORBIDDEN)?;
 
+    let owner_user_id = resolve_plugin_owner_id(&ctx, &actor, token)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
     let runtime = ctx.plugin_runtime();
-    ensure_plugin_permission(
-        &runtime,
-        actor_user_id(&actor),
-        &p.plugin,
-        PERMISSION_DOC_READ,
-    )
-    .await?;
+    ensure_plugin_permission(&runtime, owner_user_id, &p.plugin, PERMISSION_DOC_READ).await?;
 
     let repo = ctx.plugin_repo();
     let get_uc = GetPluginKv {
@@ -475,14 +470,12 @@ pub async fn put_kv_value(
     .await
     .map_err(|_| StatusCode::FORBIDDEN)?;
 
+    let owner_user_id = resolve_plugin_owner_id(&ctx, &actor, token)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
     let runtime = ctx.plugin_runtime();
-    ensure_plugin_permission(
-        &runtime,
-        actor_user_id(&actor),
-        &p.plugin,
-        PERMISSION_DOC_WRITE,
-    )
-    .await?;
+    ensure_plugin_permission(&runtime, owner_user_id, &p.plugin, PERMISSION_DOC_WRITE).await?;
 
     let repo = ctx.plugin_repo();
     let put_uc = PutPluginKv {
@@ -602,6 +595,28 @@ fn ensure_valid_plugin_id(id: &str) -> Result<(), StatusCode> {
     }
 }
 
+async fn resolve_plugin_owner_id(
+    ctx: &AppContext,
+    actor: &access::Actor,
+    token_hint: Option<&str>,
+) -> AnyResult<Option<Uuid>> {
+    match actor {
+        access::Actor::User(uid) => Ok(Some(*uid)),
+        access::Actor::ShareToken(token_str) => {
+            let lookup_token = token_hint
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| token_str.as_str());
+            if lookup_token.is_empty() {
+                return Ok(None);
+            }
+            let repo = ctx.shares_repo();
+            let owner = repo.get_document_owner_by_token(lookup_token).await?;
+            Ok(owner)
+        }
+        access::Actor::Public => Ok(None),
+    }
+}
+
 #[utoipa::path(
     get,
     path = "/api/me/plugins/manifest",
@@ -622,24 +637,12 @@ pub async fn get_manifest(
     let store = ctx.plugin_assets();
     let mut items: Vec<ManifestItem> = Vec::new();
 
-    let mut user_scope_owner: Option<Uuid> = match &actor {
-        access::Actor::User(user_id) => Some(*user_id),
-        _ => None,
-    };
-
-    if user_scope_owner.is_none() {
-        if let access::Actor::ShareToken(token_str) = &actor {
-            let share_repo = ctx.shares_repo();
-            match share_repo.get_document_owner_by_token(token_str).await {
-                Ok(owner) => {
-                    user_scope_owner = owner;
-                }
-                Err(err) => {
-                    tracing::warn!(token = %token_str, error = ?err, "share_owner_lookup_failed");
-                }
-            }
-        }
-    }
+    let user_scope_owner = resolve_plugin_owner_id(&ctx, &actor, token)
+        .await
+        .map_err(|err| {
+            tracing::warn!(error = ?err, "share_owner_lookup_failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     let global_plugins = store
         .list_latest_global_manifests()
@@ -916,12 +919,5 @@ async fn ensure_plugin_permission(
         Ok(())
     } else {
         Err(StatusCode::FORBIDDEN)
-    }
-}
-
-fn actor_user_id(actor: &access::Actor) -> Option<Uuid> {
-    match actor {
-        access::Actor::User(uid) => Some(*uid),
-        _ => None,
     }
 }
