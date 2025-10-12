@@ -1,4 +1,4 @@
-import { useNavigate } from '@tanstack/react-router'
+import { useNavigate, useRouterState } from '@tanstack/react-router'
 import React from 'react'
 
 import { useAuthContext } from '@/features/auth'
@@ -12,9 +12,22 @@ import { useRealtime } from '@/processes/collaboration/contexts/realtime-context
 
 export default function PluginFallback() {
   const navigate = useNavigate()
+  const search = useRouterState({ select: (state) => state.location.search })
   const { user, loading: authLoading } = useAuthContext()
   const realtime = useRealtime()
   const authReady = !authLoading && !!user
+  const shareToken = React.useMemo(() => {
+    if (!search) return null
+    try {
+      const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search)
+      const value = params.get('token')
+      return value && value.trim().length > 0 ? value : null
+    } catch {
+      return null
+    }
+  }, [search])
+  const allowAnonymous = Boolean(shareToken)
+  const pluginAccessReady = allowAnonymous || authReady
   const [manifestLoading, setManifestLoading] = React.useState(true)
   const [pluginMounting, setPluginMounting] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
@@ -23,7 +36,7 @@ export default function PluginFallback() {
   const disposeRef = React.useRef<null | (() => void)>(null)
 
   React.useEffect(() => {
-    if (authLoading || authReady) return
+    if (allowAnonymous || authLoading || authReady) return
 
     const location = (() => {
       try {
@@ -44,10 +57,10 @@ export default function PluginFallback() {
         ? { redirect: location.pathname, redirectSearch }
         : { redirect: location.pathname },
     })
-  }, [authLoading, authReady, navigate])
+  }, [allowAnonymous, authLoading, authReady, navigate])
 
   React.useEffect(() => {
-    if (!authReady) return
+    if (!pluginAccessReady) return
     let cancelled = false
 
     const path = (() => {
@@ -61,10 +74,11 @@ export default function PluginFallback() {
     setManifestLoading(true)
     setError(null)
     setPlugin(null)
+    realtime.setDocumentId(undefined)
 
     ;(async () => {
       try {
-        const match = await resolvePluginForRoute(path)
+        const match = await resolvePluginForRoute(path, { token: shareToken ?? undefined })
         if (cancelled) return
         if (!match) {
           setError('Not Found')
@@ -85,10 +99,10 @@ export default function PluginFallback() {
     return () => {
       cancelled = true
     }
-  }, [authReady])
+  }, [pluginAccessReady, shareToken])
 
   React.useEffect(() => {
-    if (!authReady) return
+    if (!pluginAccessReady) return
     let cancelled = false
     const container = containerRef.current
 
@@ -108,6 +122,7 @@ export default function PluginFallback() {
           /* noop */
         }
       }
+      realtime.setDocumentId(undefined)
       realtime.setDocumentTitle(undefined)
       realtime.setDocumentStatus(undefined)
       realtime.setDocumentBadge(undefined)
@@ -126,6 +141,7 @@ export default function PluginFallback() {
           container,
           {
             navigate: (to) => navigate({ to }),
+            setDocumentId: realtime.setDocumentId,
             setDocumentTitle: realtime.setDocumentTitle,
             setDocumentStatus: realtime.setDocumentStatus,
             setDocumentBadge: realtime.setDocumentBadge,
@@ -170,14 +186,18 @@ export default function PluginFallback() {
       } catch {
         /* noop */
       }
+      realtime.setDocumentId(undefined)
       realtime.setDocumentTitle(undefined)
       realtime.setDocumentStatus(undefined)
       realtime.setDocumentBadge(undefined)
       realtime.setDocumentActions([])
     }
-  }, [plugin, navigate, authReady])
+  }, [plugin, navigate, pluginAccessReady])
 
-  if (authLoading || !authReady) {
+  if (!pluginAccessReady) {
+    if (authLoading && !allowAnonymous) {
+      return <div className="p-6 text-sm text-muted-foreground">Checking access…</div>
+    }
     return <div className="p-6 text-sm text-muted-foreground">Checking access…</div>
   }
 

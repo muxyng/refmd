@@ -37,10 +37,20 @@ export class PluginsService {
      * @returns ManifestItem
      * @throws ApiError
      */
-    public static pluginsGetManifest(): CancelablePromise<Array<ManifestItem>> {
+    public static pluginsGetManifest({
+        token,
+    }: {
+        /**
+         * Share token
+         */
+        token?: string | null,
+    } = {}): CancelablePromise<Array<ManifestItem>> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/me/plugins/manifest',
+            query: {
+                'token': token,
+            },
         });
     }
     /**

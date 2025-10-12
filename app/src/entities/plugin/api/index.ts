@@ -7,14 +7,14 @@ export const pluginKeys = {
   manifest: () => ['plugins', 'manifest'] as const,
 }
 
-export const pluginManifestQuery = () => ({
-  queryKey: pluginKeys.manifest(),
-  queryFn: () => getPluginManifest(),
+export const pluginManifestQuery = (token?: string | null) => ({
+  queryKey: token ? [...pluginKeys.manifest(), token] : pluginKeys.manifest(),
+  queryFn: () => getPluginManifest(token ?? undefined),
   staleTime: 60_000,
 })
 
-export async function getPluginManifest(): Promise<PluginManifestItem[]> {
-  return PluginsService.pluginsGetManifest()
+export async function getPluginManifest(token?: string): Promise<PluginManifestItem[]> {
+  return PluginsService.pluginsGetManifest({ token })
 }
 
 export async function execPluginAction(

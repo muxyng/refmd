@@ -605,16 +605,19 @@ fn ensure_valid_plugin_id(id: &str) -> Result<(), StatusCode> {
 #[utoipa::path(
     get,
     path = "/api/me/plugins/manifest",
+    params(("token" = Option<String>, Query, description = "Share token (optional)")),
     responses((status = 200, body = [ManifestItem])),
     tag = "Plugins",
     operation_id = "pluginsGetManifest"
 )]
 pub async fn get_manifest(
     State(ctx): State<AppContext>,
-    bearer: Bearer,
+    bearer: Option<Bearer>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<Vec<ManifestItem>>, StatusCode> {
-    let sub = crate::presentation::http::auth::validate_bearer_public(&ctx.cfg, bearer)?;
-    let user_id = Uuid::parse_str(&sub).map_err(|_| StatusCode::UNAUTHORIZED)?;
+    let token = params.get("token").map(|s| s.as_str());
+    let actor =
+        auth::resolve_actor_from_parts(&ctx.cfg, bearer, token).ok_or(StatusCode::UNAUTHORIZED)?;
 
     let store = ctx.plugin_assets();
     let mut items: Vec<ManifestItem> = Vec::new();
@@ -635,28 +638,30 @@ pub async fn get_manifest(
         }
     }
 
-    let installation_repo = ctx.plugin_installations();
-    let installs = installation_repo
-        .list_for_user(user_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    for inst in installs.into_iter().filter(|i| i.status == "enabled") {
-        if let Some(json) = store
-            .load_user_manifest(&user_id, &inst.plugin_id, &inst.version)
+    if let access::Actor::User(user_id) = actor {
+        let installation_repo = ctx.plugin_installations();
+        let installs = installation_repo
+            .list_for_user(user_id)
             .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        {
-            if let Some(item) = manifest_item_from_json(
-                &inst.plugin_id,
-                &inst.version,
-                &json,
-                &format!(
-                    "/api/plugin-assets/{}/{}/{}",
-                    user_id, inst.plugin_id, inst.version
-                ),
-                "user",
-            ) {
-                items.push(item);
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        for inst in installs.into_iter().filter(|i| i.status == "enabled") {
+            if let Some(json) = store
+                .load_user_manifest(&user_id, &inst.plugin_id, &inst.version)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            {
+                if let Some(item) = manifest_item_from_json(
+                    &inst.plugin_id,
+                    &inst.version,
+                    &json,
+                    &format!(
+                        "/api/plugin-assets/{}/{}/{}",
+                        user_id, inst.plugin_id, inst.version
+                    ),
+                    "user",
+                ) {
+                    items.push(item);
+                }
             }
         }
     }

@@ -31,13 +31,16 @@ export function usePluginDocumentRedirect(docId: string, options: Options = {}) 
 
     const run = async () => {
       try {
-        const manifest = await getPluginManifest()
+        const searchParams = new URLSearchParams(window.location.search)
+        const shareToken = (() => {
+          const value = searchParams.get('token')
+          return value && value.trim().length > 0 ? value : undefined
+        })()
+        const manifest = await getPluginManifest(shareToken)
         if (!Array.isArray(manifest) || manifest.length === 0) {
           if (!cancelled) setRedirecting(false)
           return
         }
-        const searchParams = new URLSearchParams(window.location.search)
-        const token = searchParams.get('token') || undefined
         const currentRoute = window.location.pathname + window.location.search + window.location.hash
 
         const candidates = (manifest as PluginManifestItem[])
@@ -101,15 +104,15 @@ export function usePluginDocumentRedirect(docId: string, options: Options = {}) 
             const host = await createPluginHost(candidate.plugin as any, {
               mode: 'primary',
               docId,
-              token,
+              token: shareToken,
               route: currentRoute,
               navigate: navigateTo,
             })
             const origin = (host as any)?.origin || ''
-            const canOpen = await mod.canOpen(docId, { token, origin, host })
+            const canOpen = await mod.canOpen(docId, { token: shareToken, origin, host })
             if (!canOpen || typeof mod.getRoute !== 'function') continue
             if (!cancelled) setRedirecting(true)
-            const to = await mod.getRoute(docId, { token, origin, host })
+            const to = await mod.getRoute(docId, { token: shareToken, origin, host })
             if (typeof to === 'string' && to) {
               navigateTo(to)
               return

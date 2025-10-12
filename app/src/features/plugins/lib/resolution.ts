@@ -22,8 +22,12 @@ export type DocumentPluginMatch = {
   docId: string
 }
 
-export async function resolvePluginForRoute(path: string): Promise<RoutePluginMatch | null> {
-  const manifest = await getPluginManifest()
+export async function resolvePluginForRoute(
+  path: string,
+  options: { token?: string | null } = {},
+): Promise<RoutePluginMatch | null> {
+  const token = options.token ?? extractTokenFromPath(path)
+  const manifest = await getPluginManifest(token ?? undefined)
 
   for (const item of manifest) {
     const mounts = Array.isArray(item.mounts) ? item.mounts : []
@@ -52,7 +56,7 @@ export async function resolvePluginForDocument(
   token?: string | null,
   options: { source?: 'primary' | 'secondary' } = {},
 ): Promise<DocumentPluginMatch | null> {
-  const manifest = await getPluginManifest()
+  const manifest = await getPluginManifest(token ?? undefined)
   const apiOrigin = getApiOrigin()
 
   for (const item of manifest) {
@@ -206,6 +210,20 @@ function getCurrentPathname() {
   }
 }
 
+function extractTokenFromPath(path: string): string | null {
+  if (!path) return null
+  const idx = path.indexOf('?')
+  if (idx === -1) return null
+  const query = path.slice(idx + 1)
+  try {
+    const search = new URLSearchParams(query)
+    const value = search.get('token')
+    return value && value.trim().length > 0 ? value : null
+  } catch {
+    return null
+  }
+}
+
 export async function mountResolvedPlugin(
   match: DocumentPluginMatch,
   container: HTMLElement,
@@ -233,13 +251,14 @@ export async function mountRoutePlugin(
   container: HTMLElement,
   options: {
     navigate?: (to: string) => void | Promise<void>
+    setDocumentId?: (id?: string | null) => void
     setDocumentTitle?: (title?: string | null) => void
     setDocumentStatus?: (status?: string | null) => void
     setDocumentBadge?: (badge?: string | null) => void
     setDocumentActions?: (actions: DocumentHeaderAction[]) => void
   } = {},
 ) {
-  const { navigate, setDocumentTitle, setDocumentStatus, setDocumentBadge, setDocumentActions } = options
+  const { navigate, setDocumentId, setDocumentTitle, setDocumentStatus, setDocumentBadge, setDocumentActions } = options
   const host = await createPluginHost(match.manifest, {
     mode: 'primary',
     navigate,
@@ -254,6 +273,7 @@ export async function mountRoutePlugin(
     /* noop */
   }
 
+  try { setDocumentId?.(host?.context?.docId ?? null) } catch {}
   try { setDocumentStatus?.(undefined) } catch {}
   try { setDocumentBadge?.(undefined) } catch {}
   try { setDocumentActions?.([]) } catch {}
@@ -273,12 +293,14 @@ export async function mountRoutePlugin(
         } catch {
           /* noop */
         }
+        try { setDocumentId?.(undefined) } catch {}
         try { setDocumentTitle?.(undefined) } catch {}
         try { setDocumentStatus?.(undefined) } catch {}
         try { setDocumentBadge?.(undefined) } catch {}
         try { setDocumentActions?.([]) } catch {}
       }
     : () => {
+        try { setDocumentId?.(undefined) } catch {}
         try { setDocumentTitle?.(undefined) } catch {}
         try { setDocumentStatus?.(undefined) } catch {}
         try { setDocumentBadge?.(undefined) } catch {}
