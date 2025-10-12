@@ -1,6 +1,8 @@
 import { useNavigate, useRouterState } from '@tanstack/react-router'
 import React from 'react'
 
+import { useShareToken } from '@/shared/contexts/share-token-context'
+
 import { useAuthContext } from '@/features/auth'
 import {
   mountRoutePlugin,
@@ -12,20 +14,32 @@ import { useRealtime } from '@/processes/collaboration/contexts/realtime-context
 
 export default function PluginFallback() {
   const navigate = useNavigate()
-  const routerState = useRouterState()
-  const search = routerState.location?.search ?? ''
   const { user, loading: authLoading } = useAuthContext()
   const realtime = useRealtime()
+  const shareTokenFromContext = useShareToken()
+  const routerState = useRouterState()
+  const search = routerState.location?.search ?? ''
   const authReady = !authLoading && !!user
   const shareToken = React.useMemo(() => {
-    try {
-      const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search)
-      const value = params.get('token')
-      return value && value.trim().length > 0 ? value : null
-    } catch {
-      return null
+    if (typeof shareTokenFromContext === 'string' && shareTokenFromContext.length > 0) {
+      return shareTokenFromContext
     }
-  }, [search])
+    try {
+      if (typeof window !== 'undefined') {
+        const params = new URLSearchParams(window.location.search)
+        const value = params.get('token')
+        if (value && value.trim().length > 0) return value
+      }
+      if (search && search.length > 0) {
+        const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search)
+        const value = params.get('token')
+        if (value && value.trim().length > 0) return value
+      }
+    } catch {
+      /* noop */
+    }
+    return null
+  }, [search, shareTokenFromContext])
   const allowAnonymous = Boolean(shareToken)
   const pluginAccessReady = allowAnonymous || authReady
   const [manifestLoading, setManifestLoading] = React.useState(true)
