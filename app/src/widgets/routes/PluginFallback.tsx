@@ -12,12 +12,12 @@ import { useRealtime } from '@/processes/collaboration/contexts/realtime-context
 
 export default function PluginFallback() {
   const navigate = useNavigate()
-  const search = useRouterState({ select: (state) => state.location.search })
+  const routerState = useRouterState()
+  const search = routerState.location?.search ?? ''
   const { user, loading: authLoading } = useAuthContext()
   const realtime = useRealtime()
   const authReady = !authLoading && !!user
   const shareToken = React.useMemo(() => {
-    if (!search) return null
     try {
       const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search)
       const value = params.get('token')
