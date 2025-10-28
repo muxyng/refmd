@@ -9,8 +9,9 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use uuid::Uuid;
 use yrs::encoding::read::Cursor;
 use yrs::encoding::write::Write as YWrite;
+use yrs::sync::awareness::Awareness;
 use yrs::sync::protocol::{MSG_SYNC, MSG_SYNC_UPDATE};
-use yrs::sync::{Message, MessageReader, SyncMessage};
+use yrs::sync::{DefaultProtocol, Message, MessageReader, Protocol, SyncMessage};
 use yrs::updates::decoder::DecoderV1;
 use yrs::updates::encoder::{Encoder, EncoderV1};
 use yrs::{Doc, GetString, ReadTxn, StateVector, Transact};
@@ -224,6 +225,9 @@ impl RealtimeEngineTrait for RedisRealtimeEngine {
                 let mut guard = sink.lock().await;
                 let _ = guard.send(frame).await;
             }
+            Self::send_protocol_start(sink.clone(), awareness_service.awareness())
+                .await
+                .context("redis_cluster_send_protocol_start")?;
 
             let updates_stream = self
                 .bus
@@ -504,4 +508,23 @@ fn spawn_persistence_worker(
 
         tracing::info!("redis_persistence_worker_stopped");
     }))
+}
+
+impl RedisRealtimeEngine {
+    async fn send_protocol_start(
+        sink: DynRealtimeSink,
+        awareness: Arc<Awareness>,
+    ) -> anyhow::Result<()> {
+        let mut encoder = EncoderV1::new();
+        DefaultProtocol
+            .start::<EncoderV1>(awareness.as_ref(), &mut encoder)
+            .map_err(|err| anyhow!(err))?;
+        let frame = encoder.to_vec();
+        if frame.is_empty() {
+            return Ok(());
+        }
+        let mut guard = sink.lock().await;
+        guard.send(frame).await.map_err(|err| anyhow!(err))?;
+        Ok(())
+    }
 }

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use futures_util::SinkExt;
 use tokio::sync::mpsc;
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::{Duration, sleep};
@@ -8,6 +9,7 @@ use uuid::Uuid;
 use yrs::GetString;
 use yrs::encoding::write::Write as YWrite;
 use yrs::sync::protocol::{MSG_SYNC, MSG_SYNC_UPDATE};
+use yrs::sync::{DefaultProtocol, Protocol};
 use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::{Encoder, EncoderV1};
 use yrs::{Doc, ReadTxn, StateVector, Transact, Update};
@@ -348,11 +350,18 @@ impl Hub {
     ) -> anyhow::Result<()> {
         let room = self.get_or_create(doc_id).await?;
         let subscription = if can_edit {
-            room.broadcast.subscribe(sink, stream)
+            room.broadcast.subscribe(sink.clone(), stream)
         } else {
             room.broadcast
-                .subscribe_with(sink, stream, ReadOnlyProtocol)
+                .subscribe_with(sink.clone(), stream, ReadOnlyProtocol)
         };
+
+        let awareness = room.awareness.clone();
+        if can_edit {
+            Self::send_protocol_start(sink, awareness, DefaultProtocol).await?;
+        } else {
+            Self::send_protocol_start(sink, awareness, ReadOnlyProtocol).await?;
+        }
 
         subscription
             .completed()
@@ -379,5 +388,31 @@ impl yrs::sync::Protocol for ReadOnlyProtocol {
         _update: yrs::Update,
     ) -> Result<Option<yrs::sync::Message>, yrs::sync::Error> {
         Ok(None)
+    }
+}
+
+impl Hub {
+    async fn send_protocol_start<P>(
+        sink: DynRealtimeSink,
+        awareness: AwarenessRef,
+        protocol: P,
+    ) -> anyhow::Result<()>
+    where
+        P: Protocol,
+    {
+        let mut encoder = EncoderV1::new();
+        protocol
+            .start::<EncoderV1>(awareness.as_ref(), &mut encoder)
+            .map_err(|err| anyhow::anyhow!(err))?;
+        let frame = encoder.to_vec();
+        if frame.is_empty() {
+            return Ok(());
+        }
+        let mut guard = sink.lock().await;
+        guard
+            .send(frame)
+            .await
+            .map_err(|err| anyhow::anyhow!(err))?;
+        Ok(())
     }
 }
