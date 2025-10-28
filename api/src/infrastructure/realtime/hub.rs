@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Context;
+use chrono::Utc;
 use futures_util::SinkExt;
 use tokio::sync::mpsc;
 use tokio::sync::{Mutex, RwLock};
@@ -169,7 +170,10 @@ impl Hub {
                             .await
                         {
                             Ok(result) => {
-                                let label = format!("Auto snapshot #{}", result.version);
+                                let label = format!(
+                                    "Snapshot {}",
+                                    Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+                                );
                                 if let Err(e) = snapshot_service
                                     .archive_snapshot(
                                         &persist_doc,

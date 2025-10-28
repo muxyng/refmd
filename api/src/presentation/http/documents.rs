@@ -50,7 +50,6 @@ pub struct DocumentListResponse {
 pub struct SnapshotSummary {
     pub id: Uuid,
     pub document_id: Uuid,
-    pub version: i64,
     pub label: String,
     pub notes: Option<String>,
     pub kind: String,
@@ -119,7 +118,6 @@ fn snapshot_summary_from(record: SnapshotArchiveRecord) -> SnapshotSummary {
     SnapshotSummary {
         id: record.id,
         document_id: record.document_id,
-        version: record.version,
         label: record.label,
         notes: record.notes,
         kind: record.kind,

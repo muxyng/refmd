@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, anyhow};
+use chrono::Utc;
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
@@ -513,8 +514,10 @@ fn spawn_persistence_worker(
                                             }
                                         };
                                         if should_archive {
-                                            let label =
-                                                format!("Auto snapshot #{}", result.version);
+                                            let label = format!(
+                                                "Snapshot {}",
+                                                Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+                                            );
                                             if let Err(e) = snapshot_service
                                                 .archive_snapshot(
                                                     &doc_uuid,

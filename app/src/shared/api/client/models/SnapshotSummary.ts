@@ -12,6 +12,5 @@ export type SnapshotSummary = {
     kind: string;
     label: string;
     notes?: string | null;
-    version: number;
 };
 

@@ -8,8 +8,6 @@ import type { SnapshotDiffResponse, SnapshotSummary, GitDiffResult, GitDiffLine 
 import { overlayPanelClass } from '@/shared/lib/overlay-classes'
 import { cn } from '@/shared/lib/utils'
 import { Alert, AlertDescription } from '@/shared/ui/alert'
-import { Badge } from '@/shared/ui/badge'
-import { Button } from '@/shared/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/shared/ui/dialog'
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/shared/ui/resizable'
 import { ScrollArea } from '@/shared/ui/scroll-area'
@@ -17,6 +15,7 @@ import { ScrollArea } from '@/shared/ui/scroll-area'
 import { documentKeys, downloadSnapshot, snapshotDiffQuery, triggerSnapshotRestore, useDocumentSnapshots } from '@/entities/document'
 
 import { DiffViewer } from '@/features/git-sync/ui/diff-viewer'
+import { Button } from '@/shared/ui/button'
 
 type SnapshotHistoryDialogProps = {
   documentId: string
@@ -153,9 +152,6 @@ export function SnapshotHistoryDialog({ documentId, open, onOpenChange, token, c
                         >
                           <div className="flex items-center justify-between gap-2">
                             <span className="text-sm font-medium truncate">{snapshot.label}</span>
-                            <Badge variant="secondary" className="text-[11px] uppercase tracking-wide">
-                              v{snapshot.version}
-                            </Badge>
                           </div>
                           <div className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
                             <Clock className="h-3 w-3" />
@@ -177,14 +173,9 @@ export function SnapshotHistoryDialog({ documentId, open, onOpenChange, token, c
                 <div className="px-6 py-4 border-b flex flex-wrap items-start justify-between gap-3">
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
-                      <h3 className="text-lg font-semibold">
+                      <h3 className="text-lg font-semibold truncate">
                         {selectedSnapshot?.label ?? 'Snapshot'}
                       </h3>
-                      {selectedSnapshot && (
-                        <Badge variant="outline" className="uppercase text-[11px]">
-                          v{selectedSnapshot.version}
-                        </Badge>
-                      )}
                     </div>
                     <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
                       {selectedSnapshot ? (
@@ -315,7 +306,7 @@ function SnapshotDiffViewer({ diff, viewMode }: { diff: SnapshotDiffResponse; vi
   const diffResult = useMemo(() => buildGitDiffResult(baseMarkdown, diff.target_markdown), [baseMarkdown, diff.target_markdown])
 
   const baseLabel = diff.base.kind === SnapshotDiffKind.SNAPSHOT && diff.base.snapshot
-    ? `Snapshot v${diff.base.snapshot.version}`
+    ? diff.base.snapshot.label || 'Snapshot'
     : 'Current document'
 
   return (

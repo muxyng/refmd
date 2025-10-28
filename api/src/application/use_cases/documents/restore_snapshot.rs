@@ -1,3 +1,4 @@
+use chrono::Utc;
 use uuid::Uuid;
 
 use crate::application::ports::document_snapshot_archive_repository::SnapshotArchiveRecord;
@@ -55,8 +56,9 @@ where
             .await?;
 
         let label = format!(
-            "Restore #{}, {}",
-            persist_result.version, snapshot_record.label
+            "Restore {}, {}",
+            Utc::now().format("%Y-%m-%d %H:%M:%S UTC"),
+            snapshot_record.label
         );
         let archive = self
             .snapshots
