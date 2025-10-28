@@ -56,6 +56,7 @@ impl DocHydrationService {
         let mut last_update_stream_id: Option<String> = None;
         let mut last_awareness_stream_id: Option<String> = None;
         let mut awareness_frames = Vec::new();
+        let mut applied_any = false;
 
         if let Some(snapshot) = self.state_reader.latest_snapshot(doc_id).await? {
             let doc_for_snapshot = doc.clone();
@@ -69,6 +70,7 @@ impl DocHydrationService {
             .await
             .context("hydrate_apply_snapshot_join")?;
             last_seq = snapshot.version;
+            applied_any = true;
         }
 
         let updates = self.state_reader.updates_since(doc_id, last_seq).await?;
@@ -77,6 +79,7 @@ impl DocHydrationService {
             if update.seq > last_seq {
                 apply_update_bytes(&doc, &update.update)?;
                 last_seq = update.seq;
+                applied_any = true;
             }
         }
 
@@ -92,6 +95,7 @@ impl DocHydrationService {
                 txn.apply_update(update)?;
             }
             last_update_stream_id = Some(entry.id);
+            applied_any = true;
         }
 
         let awareness_entries = self
@@ -103,7 +107,7 @@ impl DocHydrationService {
             last_awareness_stream_id = Some(entry.id);
         }
 
-        if options.read_storage_if_empty {
+        if options.read_storage_if_empty && !applied_any {
             let txt = doc.get_or_insert_text("content");
             let txn = doc.transact();
             let is_empty = yrs::Text::len(&txt, &txn) == 0;
@@ -171,7 +175,13 @@ fn strip_frontmatter(content: &str) -> &str {
     if content.starts_with("---\n") {
         if let Some(idx) = content[4..].find("\n---\n") {
             let start = 4 + idx + 5;
-            &content[start..]
+            let mut body = &content[start..];
+            if let Some(stripped) = body.strip_prefix("\r\n") {
+                body = stripped;
+            } else if let Some(stripped) = body.strip_prefix('\n') {
+                body = stripped;
+            }
+            body
         } else {
             content
         }

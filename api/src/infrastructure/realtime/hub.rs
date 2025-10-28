@@ -286,22 +286,6 @@ impl Hub {
                         }
                     }
 
-                    let hydrated_is_empty = {
-                        let txt = hydrated_state.doc.get_or_insert_text("content");
-                        let txn = hydrated_state.doc.transact();
-                        let len = yrs::Text::len(&txt, &txn);
-                        drop(txn);
-                        len == 0
-                    };
-
-                    if hydrated_is_empty {
-                        let txt = doc.get_or_insert_text("content");
-                        let mut txn = doc.transact_mut();
-                        if yrs::Text::len(&txt, &txn) == 0 {
-                            yrs::Text::push(&txt, &mut txn, "# New Document\n\nStart typing...");
-                        }
-                    }
-
                     {
                         let mut guard = seq_for_hydrate.lock().await;
                         if hydrated_state.last_seq > *guard {
