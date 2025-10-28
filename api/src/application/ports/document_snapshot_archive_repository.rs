@@ -45,4 +45,10 @@ pub trait DocumentSnapshotArchiveRepository: Send + Sync {
         limit: i64,
         offset: i64,
     ) -> anyhow::Result<Vec<SnapshotArchiveRecord>>;
+
+    async fn latest_before(
+        &self,
+        doc_id: Uuid,
+        version: i64,
+    ) -> anyhow::Result<Option<(SnapshotArchiveRecord, Vec<u8>)>>;
 }

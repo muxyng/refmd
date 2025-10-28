@@ -1,16 +1,22 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { AlignLeft, Clock, Columns2, DownloadCloud, History as HistoryIcon, RotateCcw } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
-import { SnapshotDiffKind } from '@/shared/api'
-import type { SnapshotDiffResponse, SnapshotSummary } from '@/shared/api'
+import { SnapshotDiffKind, GitDiffLineType } from '@/shared/api'
+import type { SnapshotDiffResponse, SnapshotSummary, GitDiffResult, GitDiffLine } from '@/shared/api'
+import { overlayPanelClass } from '@/shared/lib/overlay-classes'
 import { cn } from '@/shared/lib/utils'
+import { Alert, AlertDescription } from '@/shared/ui/alert'
 import { Badge } from '@/shared/ui/badge'
 import { Button } from '@/shared/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/shared/ui/dialog'
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/shared/ui/resizable'
 import { ScrollArea } from '@/shared/ui/scroll-area'
 
 import { documentKeys, downloadSnapshot, snapshotDiffQuery, triggerSnapshotRestore, useDocumentSnapshots } from '@/entities/document'
+
+import { DiffViewer } from '@/features/git-sync/ui/diff-viewer'
 
 type SnapshotHistoryDialogProps = {
   documentId: string
@@ -24,6 +30,7 @@ export function SnapshotHistoryDialog({ documentId, open, onOpenChange, token, c
   const { data, isLoading, error } = useDocumentSnapshots(documentId, { token })
   const snapshots = data?.items ?? []
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [viewMode, setViewMode] = useState<'unified' | 'split'>('unified')
   const queryClient = useQueryClient()
 
   useEffect(() => {
@@ -81,211 +88,210 @@ export function SnapshotHistoryDialog({ documentId, open, onOpenChange, token, c
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[1100px] max-w-[95vw] h-[85vh] p-0 flex flex-col">
+      <DialogContent className={cn('sm:max-w-[85vw] max-w-[95vw] h-[90vh] p-0 flex flex-col', overlayPanelClass)}>
         <DialogHeader className="px-6 py-4 border-b flex-shrink-0">
-          <DialogTitle>Snapshots</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            <HistoryIcon className="h-4 w-4 text-muted-foreground" />
+            Snapshots
+          </DialogTitle>
         </DialogHeader>
-        <div className="flex flex-1 min-h-0">
-          <aside className="w-72 border-r flex flex-col">
-            <div className="p-4 border-b">
-              <h3 className="text-sm font-medium">History</h3>
-              <p className="text-xs text-muted-foreground">Select a snapshot to review changes.</p>
-            </div>
-            <ScrollArea className="flex-1">
-              <div className="flex flex-col gap-1 p-2">
-                {isLoading && (
-                  <div className="px-2 py-4 text-sm text-muted-foreground">Loading snapshots…</div>
-                )}
-                {error && !isLoading && (
-                  <div className="px-2 py-4 text-sm text-destructive">Failed to load snapshots.</div>
-                )}
-                {!isLoading && !error && snapshots.length === 0 && (
-                  <div className="px-2 py-4 text-sm text-muted-foreground">No snapshots available yet.</div>
-                )}
-                {snapshots.map((snapshot) => (
-                  <button
-                    key={snapshot.id}
-                    onClick={() => setSelectedId(snapshot.id)}
-                    className={cn(
-                      'text-left rounded-md px-3 py-2 transition-colors border border-transparent',
-                      selectedSnapshotId === snapshot.id
-                        ? 'bg-primary/10 border-primary/40 text-primary'
-                        : 'hover:bg-muted'
-                    )}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-medium truncate">{snapshot.label}</span>
-                      <Badge variant="secondary" className="text-[11px] uppercase tracking-wide">
-                        v{snapshot.version}
-                      </Badge>
-                    </div>
-                    <div className="text-xs text-muted-foreground mt-1">
-                      {formatRelative(snapshot.created_at)}
-                    </div>
-                    {snapshot.notes && snapshot.notes.trim().length > 0 && (
-                      <div className="mt-1 text-xs text-muted-foreground/80">{snapshot.notes}</div>
-                    )}
-                  </button>
-                ))}
-              </div>
-            </ScrollArea>
-          </aside>
-          <section className="flex-1 flex flex-col min-h-0">
-            <div className="flex items-center justify-between px-6 py-4 border-b">
-              <div>
-                <h3 className="text-lg font-semibold">{selectedSnapshot?.label ?? 'Snapshot'}</h3>
-                <p className="text-sm text-muted-foreground">
-                  {selectedSnapshot
-                    ? `${formatRelative(selectedSnapshot.created_at)} • ${Math.round((selectedSnapshot.byte_size / 1024) * 10) / 10} KB`
-                    : 'Select a snapshot to review'}
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={!selectedSnapshot || downloadMutation.isPending}
-                  onClick={() => selectedSnapshot && downloadMutation.mutate(selectedSnapshot)}
-                >
-                  {downloadMutation.isPending ? 'Downloading…' : 'Download'}
-                </Button>
-                <Button
-                  variant="default"
-                  size="sm"
-                  disabled={!canRestore || !selectedSnapshot || restoreMutation.isPending}
-                  onClick={() => selectedSnapshot && restoreMutation.mutate(selectedSnapshot)}
-                >
-                  {restoreMutation.isPending ? 'Restoring…' : 'Restore'}
-                </Button>
-              </div>
-            </div>
-            <div className="flex-1 min-h-0">
-              {diffQuery.isLoading && (
-                <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
-                  Loading diff…
+        <div className="flex-1 overflow-hidden">
+          <ResizablePanelGroup direction="horizontal" className="h-full">
+            <ResizablePanel defaultSize={28} minSize={20} maxSize={40}>
+              <div className="flex flex-col h-full min-h-0 border-r">
+                <div className="px-4 py-3 border-b">
+                  <h3 className="text-sm font-medium flex items-center gap-2">
+                    <HistoryIcon className="h-4 w-4 text-muted-foreground" />
+                    History
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-1">Select a snapshot to review changes.</p>
                 </div>
-              )}
-              {diffQuery.error && !diffQuery.isLoading && (
-                <div className="p-6 text-sm text-destructive">Failed to load diff.</div>
-              )}
-              {!diffQuery.isLoading && !diffQuery.error && diffData && (
-                <SnapshotDiffViewer diff={diffData} />
-              )}
-            </div>
-          </section>
+                <ScrollArea className="flex-1 min-h-0">
+                  <div className="p-4 space-y-3">
+                    {isLoading && (
+                      <div className="flex justify-center items-center py-6 text-sm text-muted-foreground">
+                        Loading snapshots…
+                      </div>
+                    )}
+                    {error && !isLoading && (
+                      <Alert variant="destructive">
+                        <AlertDescription>Failed to load snapshots.</AlertDescription>
+                      </Alert>
+                    )}
+                    {!isLoading && !error && snapshots.length === 0 && (
+                      <div className="text-center py-6 text-sm text-muted-foreground">
+                        No snapshots available yet
+                      </div>
+                    )}
+                    {snapshots.map((snapshot) => {
+                      const isActive = selectedSnapshotId === snapshot.id
+                      return (
+                        <button
+                          key={snapshot.id}
+                          onClick={() => setSelectedId(snapshot.id)}
+                          className={cn(
+                            'w-full text-left border rounded-lg p-3 transition-colors backdrop-blur-sm',
+                            isActive ? 'bg-accent border-accent-foreground/20' : 'hover:bg-accent/40'
+                          )}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-sm font-medium truncate">{snapshot.label}</span>
+                            <Badge variant="secondary" className="text-[11px] uppercase tracking-wide">
+                              v{snapshot.version}
+                            </Badge>
+                          </div>
+                          <div className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
+                            <Clock className="h-3 w-3" />
+                            {formatRelative(snapshot.created_at)}
+                          </div>
+                          {snapshot.notes && snapshot.notes.trim().length > 0 && (
+                            <div className="mt-2 text-xs text-muted-foreground/80 line-clamp-3">{snapshot.notes}</div>
+                          )}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </ScrollArea>
+              </div>
+            </ResizablePanel>
+            <ResizableHandle withHandle />
+            <ResizablePanel defaultSize={72}>
+              <div className="h-full flex flex-col min-h-0">
+                <div className="px-6 py-4 border-b flex flex-wrap items-start justify-between gap-3">
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-lg font-semibold">
+                        {selectedSnapshot?.label ?? 'Snapshot'}
+                      </h3>
+                      {selectedSnapshot && (
+                        <Badge variant="outline" className="uppercase text-[11px]">
+                          v{selectedSnapshot.version}
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+                      {selectedSnapshot ? (
+                        <>
+                          <span className="flex items-center gap-1">
+                            <Clock className="h-3 w-3" />
+                            {formatRelative(selectedSnapshot.created_at)}
+                          </span>
+                          <span>{formatBytes(selectedSnapshot.byte_size)}</span>
+                          {selectedSnapshot.notes && (
+                            <span className="truncate max-w-[320px]">
+                              {selectedSnapshot.notes}
+                            </span>
+                          )}
+                        </>
+                      ) : (
+                        <span>Select a snapshot to review</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center flex-wrap gap-2 justify-end">
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant={viewMode === 'unified' ? 'secondary' : 'ghost'}
+                        size="sm"
+                        className="h-8 px-3 text-xs"
+                        onClick={() => setViewMode('unified')}
+                      >
+                        <AlignLeft className="h-3 w-3 mr-1" />
+                        Unified
+                      </Button>
+                      <Button
+                        variant={viewMode === 'split' ? 'secondary' : 'ghost'}
+                        size="sm"
+                        className="h-8 px-3 text-xs"
+                        onClick={() => setViewMode('split')}
+                      >
+                        <Columns2 className="h-3 w-3 mr-1" />
+                        Split
+                      </Button>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 px-3 text-xs"
+                      disabled={!selectedSnapshot || downloadMutation.isPending}
+                      onClick={() => selectedSnapshot && downloadMutation.mutate(selectedSnapshot)}
+                    >
+                      {downloadMutation.isPending ? (
+                        'Downloading…'
+                      ) : (
+                        <span className="flex items-center gap-1">
+                          <DownloadCloud className="h-3 w-3" />
+                          Download
+                        </span>
+                      )}
+                    </Button>
+                    <Button
+                      variant="default"
+                      size="sm"
+                      className="h-8 px-3 text-xs"
+                      disabled={!canRestore || !selectedSnapshot || restoreMutation.isPending}
+                      onClick={() => selectedSnapshot && restoreMutation.mutate(selectedSnapshot)}
+                    >
+                      {restoreMutation.isPending ? (
+                        'Restoring…'
+                      ) : (
+                        <span className="flex items-center gap-1">
+                          <RotateCcw className="h-3 w-3" />
+                          Restore
+                        </span>
+                      )}
+                    </Button>
+                  </div>
+                </div>
+                <ScrollArea className="flex-1 min-h-0">
+                  <div className="p-6">
+                    {diffQuery.isLoading && (
+                      <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
+                        Loading diff…
+                      </div>
+                    )}
+                    {diffQuery.error && !diffQuery.isLoading && (
+                      <Alert variant="destructive">
+                        <AlertDescription>Failed to load diff.</AlertDescription>
+                      </Alert>
+                    )}
+                    {!diffQuery.isLoading && !diffQuery.error && diffData && (
+                      <SnapshotDiffViewer diff={diffData} viewMode={viewMode} />
+                    )}
+                    {!diffQuery.isLoading && !diffQuery.error && !diffData && (
+                      <div className="text-center py-12 text-sm text-muted-foreground">
+                        Select a snapshot to view changes.
+                      </div>
+                    )}
+                  </div>
+                </ScrollArea>
+              </div>
+            </ResizablePanel>
+          </ResizablePanelGroup>
         </div>
       </DialogContent>
     </Dialog>
   )
 }
 
-function SnapshotDiffViewer({ diff }: { diff: SnapshotDiffResponse }) {
+function SnapshotDiffViewer({ diff, viewMode }: { diff: SnapshotDiffResponse; viewMode: 'unified' | 'split' }) {
   const baseMarkdown = diff.base.markdown
-  const diffLines = useMemo(() => buildDiff(baseMarkdown, diff.target_markdown), [baseMarkdown, diff.target_markdown])
+  const diffResult = useMemo(() => buildGitDiffResult(baseMarkdown, diff.target_markdown), [baseMarkdown, diff.target_markdown])
 
   const baseLabel = diff.base.kind === SnapshotDiffKind.SNAPSHOT && diff.base.snapshot
     ? `Snapshot v${diff.base.snapshot.version}`
     : 'Current document'
 
   return (
-    <div className="h-full flex flex-col">
-      <div className="flex items-center justify-between px-6 py-3 border-b bg-muted/40 text-xs text-muted-foreground">
+    <div className="h-full flex flex-col rounded-lg border bg-background/80 backdrop-blur-sm shadow-sm">
+      <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/40 text-xs text-muted-foreground">
         <span>Comparing to: {baseLabel}</span>
-        <span>{diffLines.length} lines</span>
+        <span>{diffResult.diff_lines.length} lines</span>
       </div>
-      <ScrollArea className="flex-1">
-        <div className="font-mono text-sm">
-          {diffLines.map((line, idx) => (
-            <div
-              key={`${idx}-${line.targetLine ?? 'x'}-${line.baseLine ?? 'x'}`}
-              className={cn(
-                'grid grid-cols-[60px_60px_1fr] gap-3 px-6 py-[3px] border-b border-border/40',
-                line.type === 'add' && 'bg-emerald-50 text-emerald-900',
-                line.type === 'remove' && 'bg-rose-50 text-rose-900'
-              )}
-            >
-              <span className="text-xs text-muted-foreground/70">
-                {line.baseLine !== null ? line.baseLine : ''}
-              </span>
-              <span className="text-xs text-muted-foreground/70">
-                {line.targetLine !== null ? line.targetLine : ''}
-              </span>
-              <span>
-                {line.type === 'add' && '+'}
-                {line.type === 'remove' && '-'}
-                {line.type === 'equal' && ' '}
-                {line.value === '' ? <span className="text-muted-foreground/50">(empty)</span> : ` ${line.value}`}
-              </span>
-            </div>
-          ))}
-        </div>
-      </ScrollArea>
+      <DiffViewer diffResult={diffResult} viewMode={viewMode} />
     </div>
   )
 }
-
-type DiffLine = {
-  type: 'equal' | 'add' | 'remove'
-  value: string
-  baseLine: number | null
-  targetLine: number | null
-}
-
-function buildDiff(base: string, target: string): DiffLine[] {
-  const a = base.split('\n')
-  const b = target.split('\n')
-  const m = a.length
-  const n = b.length
-  const dp: number[][] = Array(m + 1)
-    .fill(0)
-    .map(() => Array(n + 1).fill(0))
-
-  for (let i = m - 1; i >= 0; i--) {
-    for (let j = n - 1; j >= 0; j--) {
-      if (a[i] === b[j]) dp[i][j] = dp[i + 1][j + 1] + 1
-      else dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1])
-    }
-  }
-
-  const result: DiffLine[] = []
-  let i = 0
-  let j = 0
-  let baseLine = 1
-  let targetLine = 1
-
-  while (i < m && j < n) {
-    if (a[i] === b[j]) {
-      result.push({ type: 'equal', value: a[i], baseLine, targetLine })
-      i += 1
-      j += 1
-      baseLine += 1
-      targetLine += 1
-    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
-      result.push({ type: 'remove', value: a[i], baseLine, targetLine: null })
-      i += 1
-      baseLine += 1
-    } else {
-      result.push({ type: 'add', value: b[j], baseLine: null, targetLine })
-      j += 1
-      targetLine += 1
-    }
-  }
-
-  while (i < m) {
-    result.push({ type: 'remove', value: a[i], baseLine, targetLine: null })
-    i += 1
-    baseLine += 1
-  }
-
-  while (j < n) {
-    result.push({ type: 'add', value: b[j], baseLine: null, targetLine })
-    j += 1
-    targetLine += 1
-  }
-
-  return result
-}
-
 function formatRelative(date: string): string {
   const target = new Date(date)
   const now = Date.now()
@@ -312,4 +318,103 @@ function formatRelative(date: string): string {
 
 function sanitizeFilename(input: string) {
   return input.replace(/[\\/:*?"<>|\0]/g, '-').replace(/\s+/g, '_') || 'snapshot'
+}
+
+function formatBytes(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return '0 B'
+  }
+  const units = ['B', 'KB', 'MB', 'GB']
+  let idx = 0
+  let size = bytes
+  while (size >= 1024 && idx < units.length - 1) {
+    size /= 1024
+    idx++
+  }
+  return `${Math.round(size * 10) / 10} ${units[idx]}`
+}
+
+function buildGitDiffResult(base: string, target: string): GitDiffResult {
+  const oldLines = base.split('\n')
+  const newLines = target.split('\n')
+  const m = oldLines.length
+  const n = newLines.length
+  const dp: number[][] = Array(m + 1)
+    .fill(0)
+    .map(() => Array(n + 1).fill(0))
+
+  for (let i = m - 1; i >= 0; i--) {
+    for (let j = n - 1; j >= 0; j--) {
+      if (oldLines[i] === newLines[j]) dp[i][j] = dp[i + 1][j + 1] + 1
+      else dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1])
+    }
+  }
+
+  const diffLines: GitDiffLine[] = []
+  let i = 0
+  let j = 0
+  let oldLine = 1
+  let newLine = 1
+
+  while (i < m && j < n) {
+    if (oldLines[i] === newLines[j]) {
+      diffLines.push({
+        content: oldLines[i],
+        line_type: GitDiffLineType.CONTEXT,
+        old_line_number: oldLine,
+        new_line_number: newLine,
+      })
+      i++
+      j++
+      oldLine++
+      newLine++
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      diffLines.push({
+        content: oldLines[i],
+        line_type: GitDiffLineType.DELETED,
+        old_line_number: oldLine,
+        new_line_number: null,
+      })
+      i++
+      oldLine++
+    } else {
+      diffLines.push({
+        content: newLines[j],
+        line_type: GitDiffLineType.ADDED,
+        old_line_number: null,
+        new_line_number: newLine,
+      })
+      j++
+      newLine++
+    }
+  }
+
+  while (i < m) {
+    diffLines.push({
+      content: oldLines[i],
+      line_type: GitDiffLineType.DELETED,
+      old_line_number: oldLine,
+      new_line_number: null,
+    })
+    i++
+    oldLine++
+  }
+
+  while (j < n) {
+    diffLines.push({
+      content: newLines[j],
+      line_type: GitDiffLineType.ADDED,
+      old_line_number: null,
+      new_line_number: newLine,
+    })
+    j++
+    newLine++
+  }
+
+  return {
+    file_path: 'snapshot.md',
+    diff_lines: diffLines,
+    old_content: base,
+    new_content: target,
+  }
 }

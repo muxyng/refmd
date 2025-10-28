@@ -211,10 +211,12 @@ async fn main() -> anyhow::Result<()> {
     );
 
     // Build Realtime Hub
+    let auto_archive_interval = Duration::from_secs(cfg.snapshot_archive_interval_secs);
     let hub = api::infrastructure::realtime::Hub::new(
         pool.clone(),
         storage_port.clone(),
         snapshot_archive_repo.clone(),
+        auto_archive_interval,
     );
     let document_repo = Arc::new(
         api::infrastructure::db::repositories::document_repository_sqlx::SqlxDocumentRepository::new(

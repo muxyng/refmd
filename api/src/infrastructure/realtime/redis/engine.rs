@@ -1,10 +1,12 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, anyhow};
 use futures_util::{SinkExt, StreamExt};
+use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-use tokio::time::sleep;
+use tokio::time::{Instant, sleep};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use uuid::Uuid;
 use yrs::encoding::read::Cursor;
@@ -14,7 +16,7 @@ use yrs::sync::protocol::{MSG_SYNC, MSG_SYNC_UPDATE};
 use yrs::sync::{DefaultProtocol, Message, MessageReader, Protocol, SyncMessage};
 use yrs::updates::decoder::DecoderV1;
 use yrs::updates::encoder::{Encoder, EncoderV1};
-use yrs::{Doc, GetString, ReadTxn, StateVector, Transact};
+use yrs::{Doc, GetString, ReadTxn, StateVector, Text, Transact};
 
 use crate::application::ports::awareness_port::AwarenessPublisher;
 use crate::application::ports::document_snapshot_archive_repository::DocumentSnapshotArchiveRepository;
@@ -92,6 +94,9 @@ impl RedisRealtimeEngine {
             tagging_repo,
             archive_repo,
         ));
+        let auto_archive_interval = Duration::from_secs(cfg.snapshot_archive_interval_secs);
+        let last_auto_archive: Arc<Mutex<HashMap<String, Instant>>> =
+            Arc::new(Mutex::new(HashMap::new()));
 
         let trim_lifetime = if cfg.redis_min_message_lifetime_ms > 0 {
             Some(Duration::from_millis(cfg.redis_min_message_lifetime_ms))
@@ -105,6 +110,8 @@ impl RedisRealtimeEngine {
             hydration_service.clone(),
             snapshot_service.clone(),
             trim_lifetime,
+            auto_archive_interval,
+            last_auto_archive.clone(),
         );
 
         Ok(Self {
@@ -380,14 +387,26 @@ impl RealtimeEngineTrait for RedisRealtimeEngine {
             .hydration_service
             .hydrate(&uuid, HydrationOptions::default())
             .await?;
-        let current_sv = {
-            let txn = hydrated.doc.transact();
-            txn.state_vector()
-        };
         let update_bytes = {
-            let txn = doc.transact();
-            txn.encode_state_as_update_v1(&current_sv)
+            let txt_new = doc.get_or_insert_text("content");
+            let txn_new = doc.transact();
+            let new_markdown = txt_new.get_string(&txn_new);
+            drop(txn_new);
+
+            let txt = hydrated.doc.get_or_insert_text("content");
+            let mut txn = hydrated.doc.transact_mut();
+            let len = txt.len(&txn);
+            if len > 0 {
+                txt.remove_range(&mut txn, 0, len);
+            }
+            if !new_markdown.is_empty() {
+                txt.insert(&mut txn, 0, &new_markdown);
+            }
+            txn.encode_update_v1()
         };
+        if update_bytes.is_empty() {
+            return Ok(());
+        }
         let mut encoder = EncoderV1::new();
         encoder.write_var(MSG_SYNC);
         encoder.write_var(MSG_SYNC_UPDATE);
@@ -428,6 +447,8 @@ fn spawn_persistence_worker(
     hydration_service: Arc<DocHydrationService>,
     snapshot_service: Arc<SnapshotService>,
     trim_lifetime: Option<Duration>,
+    auto_archive_interval: Duration,
+    last_auto_archive: Arc<Mutex<HashMap<String, Instant>>>,
 ) -> Option<JoinHandle<()>> {
     if !cfg.cluster_mode {
         return None;
@@ -474,27 +495,48 @@ fn spawn_persistence_worker(
                                 .await
                             {
                                 Ok(result) => {
-                                    let label = format!("Auto snapshot #{}", result.version);
-                                    if let Err(e) = snapshot_service
-                                        .archive_snapshot(
-                                            &doc_uuid,
-                                            &hydrated.doc,
-                                            result.version,
-                                            SnapshotArchiveOptions {
-                                                label: label.as_str(),
-                                                notes: None,
-                                                kind: SnapshotArchiveKind::Automatic,
-                                                created_by: None,
-                                            },
-                                        )
-                                        .await
-                                    {
-                                        tracing::debug!(
-                                            document_id = %doc_uuid,
-                                            version = result.version,
-                                            error = ?e,
-                                            "redis_worker_snapshot_archive_failed"
-                                        );
+                                    if !auto_archive_interval.is_zero() {
+                                        let should_archive = {
+                                            let mut guard = last_auto_archive.lock().await;
+                                            let now = Instant::now();
+                                            match guard.get(&doc_id_owned) {
+                                                Some(last)
+                                                    if now.duration_since(*last)
+                                                        < auto_archive_interval =>
+                                                {
+                                                    false
+                                                }
+                                                _ => {
+                                                    guard.insert(doc_id_owned.clone(), now);
+                                                    true
+                                                }
+                                            }
+                                        };
+                                        if should_archive {
+                                            let label =
+                                                format!("Auto snapshot #{}", result.version);
+                                            if let Err(e) = snapshot_service
+                                                .archive_snapshot(
+                                                    &doc_uuid,
+                                                    &hydrated.doc,
+                                                    result.version,
+                                                    SnapshotArchiveOptions {
+                                                        label: label.as_str(),
+                                                        notes: None,
+                                                        kind: SnapshotArchiveKind::Automatic,
+                                                        created_by: None,
+                                                    },
+                                                )
+                                                .await
+                                            {
+                                                tracing::debug!(
+                                                    document_id = %doc_uuid,
+                                                    version = result.version,
+                                                    error = ?e,
+                                                    "redis_worker_snapshot_archive_failed"
+                                                );
+                                            }
+                                        }
                                     }
                                 }
                                 Err(e) => {

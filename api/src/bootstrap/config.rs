@@ -63,6 +63,7 @@ pub struct Config {
     pub redis_task_debounce_ms: u64,
     pub redis_awareness_ttl_ms: u64,
     pub redis_stream_max_len: usize,
+    pub snapshot_archive_interval_secs: u64,
 }
 
 impl Config {
@@ -154,6 +155,9 @@ impl Config {
         let redis_stream_max_len = env_var(&["REDIS_STREAM_MAX_LEN"])
             .and_then(|s| s.parse().ok())
             .unwrap_or(4096);
+        let snapshot_archive_interval_secs = env_var(&["SNAPSHOT_ARCHIVE_INTERVAL_SECS"])
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(900);
 
         // Production hardening: require proper FRONTEND_URL and robust secrets
         if is_production {
@@ -225,6 +229,7 @@ impl Config {
             redis_task_debounce_ms,
             redis_awareness_ttl_ms,
             redis_stream_max_len,
+            snapshot_archive_interval_secs,
         })
     }
 }

@@ -61,6 +61,15 @@ where
                 record: base_record,
                 markdown: base_markdown,
             }
+        } else if let Some((prev_record, prev_markdown)) = self
+            .snapshots
+            .load_previous_archive_markdown(document_id, target_record.version)
+            .await?
+        {
+            SnapshotDiffBase::Snapshot {
+                record: prev_record,
+                markdown: prev_markdown,
+            }
         } else {
             let current = self.realtime.get_content(&document_id.to_string()).await?;
             let markdown = current.unwrap_or_default();

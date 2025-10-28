@@ -248,6 +248,23 @@ impl SnapshotService {
         }
         Ok(None)
     }
+
+    pub async fn load_previous_archive_markdown(
+        &self,
+        doc_id: Uuid,
+        version: i64,
+    ) -> anyhow::Result<Option<(SnapshotArchiveRecord, String)>> {
+        if let Some((record, bytes)) = self.archive_repo.latest_before(doc_id, version).await? {
+            let doc = Doc::new();
+            let doc_for_update = doc.clone();
+            task::spawn_blocking(move || apply_update_bytes(&doc_for_update, &bytes))
+                .await
+                .map_err(|e| anyhow!("snapshot_archive_apply_join: {e}"))??;
+            let markdown = extract_markdown(&doc);
+            return Ok(Some((record, markdown)));
+        }
+        Ok(None)
+    }
 }
 
 fn extract_markdown(doc: &Doc) -> String {

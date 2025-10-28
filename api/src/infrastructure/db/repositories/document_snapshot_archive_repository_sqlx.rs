@@ -163,4 +163,52 @@ impl DocumentSnapshotArchiveRepository for SqlxDocumentSnapshotArchiveRepository
             })
             .collect())
     }
+
+    async fn latest_before(
+        &self,
+        doc_id: Uuid,
+        version: i64,
+    ) -> anyhow::Result<Option<(SnapshotArchiveRecord, Vec<u8>)>> {
+        let row = sqlx::query(
+            r#"SELECT
+                    id,
+                    document_id,
+                    version,
+                    snapshot,
+                    label,
+                    notes,
+                    kind,
+                    created_at,
+                    created_by,
+                    byte_size,
+                    content_hash
+               FROM document_snapshot_archives
+               WHERE document_id = $1 AND version < $2
+               ORDER BY version DESC
+               LIMIT 1"#,
+        )
+        .bind(doc_id)
+        .bind(version as i32)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|row| {
+            let snapshot: Vec<u8> = row.get("snapshot");
+            (
+                SnapshotArchiveRecord {
+                    id: row.get("id"),
+                    document_id: row.get("document_id"),
+                    version: row.get::<i32, _>("version") as i64,
+                    label: row.get("label"),
+                    notes: row.try_get("notes").ok(),
+                    kind: row.get("kind"),
+                    created_at: row.get("created_at"),
+                    created_by: row.try_get("created_by").ok(),
+                    byte_size: row.get("byte_size"),
+                    content_hash: row.get("content_hash"),
+                },
+                snapshot,
+            )
+        }))
+    }
 }
