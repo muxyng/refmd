@@ -21,7 +21,9 @@ use crate::application::use_cases::documents::list_documents::ListDocuments;
 use crate::application::use_cases::documents::list_snapshots::ListSnapshots;
 use crate::application::use_cases::documents::restore_snapshot::RestoreSnapshot;
 use crate::application::use_cases::documents::search_documents::SearchDocuments;
-use crate::application::use_cases::documents::snapshot_diff::{SnapshotDiff, SnapshotDiffBase};
+use crate::application::use_cases::documents::snapshot_diff::{
+    SnapshotDiff, SnapshotDiffBase, SnapshotDiffBaseMode,
+};
 use crate::application::use_cases::documents::snapshot_download::DownloadSnapshot;
 use crate::application::use_cases::documents::update_document::UpdateDocument;
 use crate::bootstrap::app_context::AppContext;
@@ -82,6 +84,30 @@ pub struct SnapshotDiffResponse {
     pub target: SnapshotSummary,
     pub target_markdown: String,
     pub base: SnapshotDiffBaseResponse,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SnapshotDiffBaseParam {
+    Auto,
+    Current,
+    Previous,
+}
+
+impl Default for SnapshotDiffBaseParam {
+    fn default() -> Self {
+        Self::Auto
+    }
+}
+
+impl From<SnapshotDiffBaseParam> for SnapshotDiffBaseMode {
+    fn from(value: SnapshotDiffBaseParam) -> Self {
+        match value {
+            SnapshotDiffBaseParam::Auto => SnapshotDiffBaseMode::Auto,
+            SnapshotDiffBaseParam::Current => SnapshotDiffBaseMode::ForceCurrent,
+            SnapshotDiffBaseParam::Previous => SnapshotDiffBaseMode::ForcePrevious,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -481,7 +507,8 @@ pub async fn list_document_snapshots(
         ("id" = Uuid, Path, description = "Document ID"),
         ("snapshot_id" = Uuid, Path, description = "Snapshot ID"),
         ("token" = Option<String>, Query, description = "Share token (optional)"),
-        ("compare" = Option<Uuid>, Query, description = "Snapshot ID to compare against (defaults to current document state)")
+        ("compare" = Option<Uuid>, Query, description = "Snapshot ID to compare against (defaults to current document state)"),
+        ("base" = Option<SnapshotDiffBaseParam>, Query, description = "Base comparison to use when compare is not provided (auto|current|previous)")
     ),
     responses((status = 200, body = SnapshotDiffResponse))
 )]
@@ -508,8 +535,13 @@ pub async fn get_document_snapshot_diff(
         snapshots: snapshot_service.as_ref(),
         realtime: realtime.as_ref(),
     };
+    let base_mode = params
+        .base
+        .map(SnapshotDiffBaseMode::from)
+        .unwrap_or(SnapshotDiffBaseMode::Auto);
+
     let result = uc
-        .execute(id, snapshot_id, params.compare)
+        .execute(id, snapshot_id, params.compare, base_mode)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -699,6 +731,8 @@ pub struct ListSnapshotsQuery {
 pub struct SnapshotDiffQuery {
     pub token: Option<String>,
     pub compare: Option<Uuid>,
+    #[serde(default)]
+    pub base: Option<SnapshotDiffBaseParam>,
 }
 
 #[derive(Debug, Default, Deserialize)]

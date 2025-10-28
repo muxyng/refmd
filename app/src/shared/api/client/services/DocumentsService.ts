@@ -9,6 +9,7 @@ import type { DocumentArchiveBinary } from '../models/DocumentArchiveBinary';
 import type { DocumentListResponse } from '../models/DocumentListResponse';
 import type { OutgoingLinksResponse } from '../models/OutgoingLinksResponse';
 import type { SearchResult } from '../models/SearchResult';
+import type { SnapshotDiffBaseParam } from '../models/SnapshotDiffBaseParam';
 import type { SnapshotDiffResponse } from '../models/SnapshotDiffResponse';
 import type { SnapshotListResponse } from '../models/SnapshotListResponse';
 import type { SnapshotRestoreResponse } from '../models/SnapshotRestoreResponse';
@@ -292,6 +293,7 @@ export class DocumentsService {
         snapshotId,
         token,
         compare,
+        base,
     }: {
         /**
          * Document ID
@@ -309,6 +311,10 @@ export class DocumentsService {
          * Snapshot ID to compare against (defaults to current document state)
          */
         compare?: string | null,
+        /**
+         * Base comparison to use when compare is not provided (auto|current|previous)
+         */
+        base?: SnapshotDiffBaseParam | null,
     }): CancelablePromise<SnapshotDiffResponse> {
         return __request(OpenAPI, {
             method: 'GET',
@@ -320,6 +326,7 @@ export class DocumentsService {
             query: {
                 'token': token,
                 'compare': compare,
+                'base': base,
             },
         });
     }

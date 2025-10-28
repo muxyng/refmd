@@ -7,6 +7,7 @@ import type {
   BacklinksResponse,
   OutgoingLinksResponse,
   SnapshotListResponse,
+  SnapshotDiffBaseParam,
   SnapshotDiffResponse,
   SnapshotRestoreResponse,
   SnapshotSummary,
@@ -19,8 +20,12 @@ export const documentKeys = {
   backlinks: (id: string) => ['documents', id, 'backlinks'] as const,
   links: (id: string) => ['documents', id, 'links'] as const,
   snapshots: (id: string) => ['documents', id, 'snapshots'] as const,
-  snapshotDiff: (id: string, snapshotId: string, compare?: string | null) =>
-    ['documents', id, 'snapshot', snapshotId, compare ?? 'current'] as const,
+  snapshotDiff: (
+    id: string,
+    snapshotId: string,
+    compare?: string | null,
+    base?: SnapshotDiffBaseParam | 'auto'
+  ) => ['documents', id, 'snapshot', snapshotId, compare ?? 'current', base ?? 'auto'] as const,
 }
 
 export const listDocumentsQuery = (params?: { query?: string; tag?: string }) => ({
@@ -67,14 +72,20 @@ export function useDocumentSnapshots(id: string, params?: { token?: string | nul
 export const snapshotDiffQuery = (
   id: string,
   snapshotId: string,
-  params?: { compare?: string | null; token?: string | null },
+  params?: { compare?: string | null; base?: SnapshotDiffBaseParam | 'auto'; token?: string | null },
 ) => ({
-  queryKey: documentKeys.snapshotDiff(id, snapshotId, params?.compare ?? undefined),
+  queryKey: documentKeys.snapshotDiff(
+    id,
+    snapshotId,
+    params?.compare ?? undefined,
+    params?.base ?? 'auto'
+  ),
   queryFn: () =>
     DocumentsService.getDocumentSnapshotDiff({
       id,
       snapshotId,
       compare: params?.compare ?? null,
+      base: params?.base === 'auto' ? null : params?.base ?? null,
       token: params?.token ?? null,
     }) as Promise<SnapshotDiffResponse>,
 })

@@ -60,6 +60,7 @@ export type { ShareBrowseResponse } from './models/ShareBrowseResponse';
 export type { ShareBrowseTreeItem } from './models/ShareBrowseTreeItem';
 export type { ShareDocumentResponse } from './models/ShareDocumentResponse';
 export type { ShareItem } from './models/ShareItem';
+export { SnapshotDiffBaseParam } from './models/SnapshotDiffBaseParam';
 export type { SnapshotDiffBaseResponse } from './models/SnapshotDiffBaseResponse';
 export { SnapshotDiffKind } from './models/SnapshotDiffKind';
 export type { SnapshotDiffResponse } from './models/SnapshotDiffResponse';

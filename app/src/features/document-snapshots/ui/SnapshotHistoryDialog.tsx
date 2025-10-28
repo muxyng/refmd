@@ -3,7 +3,7 @@ import { AlignLeft, Clock, Columns2, DownloadCloud, History as HistoryIcon, Rota
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
-import { SnapshotDiffKind, GitDiffLineType } from '@/shared/api'
+import { SnapshotDiffKind, SnapshotDiffBaseParam, GitDiffLineType } from '@/shared/api'
 import type { SnapshotDiffResponse, SnapshotSummary, GitDiffResult, GitDiffLine } from '@/shared/api'
 import { overlayPanelClass } from '@/shared/lib/overlay-classes'
 import { cn } from '@/shared/lib/utils'
@@ -31,6 +31,7 @@ export function SnapshotHistoryDialog({ documentId, open, onOpenChange, token, c
   const snapshots = data?.items ?? []
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<'unified' | 'split'>('unified')
+  const [compareBase, setCompareBase] = useState<'previous' | 'current'>('previous')
   const queryClient = useQueryClient()
 
   useEffect(() => {
@@ -48,10 +49,26 @@ export function SnapshotHistoryDialog({ documentId, open, onOpenChange, token, c
 
   const selectedSnapshotId = selectedId ?? snapshots[0]?.id
 
+  const selectedIndex = useMemo(
+    () => snapshots.findIndex((snapshot) => snapshot.id === selectedSnapshotId),
+    [snapshots, selectedSnapshotId]
+  )
+  const previousSnapshot = selectedIndex >= 0 ? snapshots[selectedIndex + 1] ?? null : null
+  const hasPreviousSnapshot = Boolean(previousSnapshot)
+
+  useEffect(() => {
+    if (compareBase === 'previous' && !hasPreviousSnapshot) {
+      setCompareBase('current')
+    }
+  }, [compareBase, hasPreviousSnapshot])
+
+  const baseParam =
+    compareBase === 'previous' ? SnapshotDiffBaseParam.PREVIOUS : SnapshotDiffBaseParam.CURRENT
+
   const diffQueryOptions = snapshotDiffQuery(
     documentId,
     selectedSnapshotId ?? '__pending__',
-    { token }
+    { token, base: baseParam }
   )
   const diffQuery = useQuery({
     ...diffQueryOptions,
@@ -189,6 +206,25 @@ export function SnapshotHistoryDialog({ documentId, open, onOpenChange, token, c
                     </div>
                   </div>
                   <div className="flex items-center flex-wrap gap-2 justify-end">
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant={compareBase === 'previous' ? 'secondary' : 'ghost'}
+                        size="sm"
+                        className="h-8 px-3 text-xs"
+                        disabled={!hasPreviousSnapshot}
+                        onClick={() => setCompareBase('previous')}
+                      >
+                        Prev Snapshot
+                      </Button>
+                      <Button
+                        variant={compareBase === 'current' ? 'secondary' : 'ghost'}
+                        size="sm"
+                        className="h-8 px-3 text-xs"
+                        onClick={() => setCompareBase('current')}
+                      >
+                        Current Document
+                      </Button>
+                    </div>
                     <div className="flex items-center gap-1">
                       <Button
                         variant={viewMode === 'unified' ? 'secondary' : 'ghost'}

@@ -14,6 +14,12 @@ pub enum SnapshotDiffBase {
     },
 }
 
+pub enum SnapshotDiffBaseMode {
+    Auto,
+    ForceCurrent,
+    ForcePrevious,
+}
+
 pub struct SnapshotDiffResult {
     pub target: SnapshotArchiveRecord,
     pub target_markdown: String,
@@ -37,6 +43,7 @@ where
         document_id: Uuid,
         snapshot_id: Uuid,
         compare_to: Option<Uuid>,
+        base_mode: SnapshotDiffBaseMode,
     ) -> anyhow::Result<Option<SnapshotDiffResult>> {
         let Some((target_record, target_markdown)) =
             self.snapshots.load_archive_markdown(snapshot_id).await?
@@ -61,19 +68,28 @@ where
                 record: base_record,
                 markdown: base_markdown,
             }
-        } else if let Some((prev_record, prev_markdown)) = self
-            .snapshots
-            .load_previous_archive_markdown(document_id, target_record.version)
-            .await?
-        {
-            SnapshotDiffBase::Snapshot {
-                record: prev_record,
-                markdown: prev_markdown,
-            }
         } else {
-            let current = self.realtime.get_content(&document_id.to_string()).await?;
-            let markdown = current.unwrap_or_default();
-            SnapshotDiffBase::Current { markdown }
+            match base_mode {
+                SnapshotDiffBaseMode::ForceCurrent => SnapshotDiffBase::Current {
+                    markdown: self.load_current_markdown(document_id).await?,
+                },
+                SnapshotDiffBaseMode::ForcePrevious | SnapshotDiffBaseMode::Auto => {
+                    if let Some((prev_record, prev_markdown)) = self
+                        .snapshots
+                        .load_previous_archive_markdown(document_id, target_record.version)
+                        .await?
+                    {
+                        SnapshotDiffBase::Snapshot {
+                            record: prev_record,
+                            markdown: prev_markdown,
+                        }
+                    } else {
+                        SnapshotDiffBase::Current {
+                            markdown: self.load_current_markdown(document_id).await?,
+                        }
+                    }
+                }
+            }
         };
 
         Ok(Some(SnapshotDiffResult {
@@ -81,5 +97,14 @@ where
             target_markdown,
             base,
         }))
+    }
+
+    async fn load_current_markdown(&self, document_id: Uuid) -> anyhow::Result<String> {
+        let current = self
+            .realtime
+            .get_content(&document_id.to_string())
+            .await?
+            .unwrap_or_default();
+        Ok(current)
     }
 }
