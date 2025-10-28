@@ -1,1 +1,1 @@
-export { SnapshotHistoryDialog } from './ui/SnapshotHistoryDialog'
+export { SnapshotHistoryDialog } from './ui/snapshot-history-dialog'

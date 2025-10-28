@@ -29,6 +29,7 @@ use crate::application::use_cases::documents::update_document::UpdateDocument;
 use crate::bootstrap::app_context::AppContext;
 use crate::domain::documents::document as domain;
 use crate::presentation::http::auth::{self, Bearer};
+use crate::presentation::http::git::DocumentDiffResult;
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct Document {
@@ -83,6 +84,7 @@ pub struct SnapshotDiffResponse {
     pub target: SnapshotSummary,
     pub target_markdown: String,
     pub base: SnapshotDiffBaseResponse,
+    pub diff: DocumentDiffResult,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, ToSchema)]
@@ -544,6 +546,7 @@ pub async fn get_document_snapshot_diff(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
+    let diff = DocumentDiffResult::from(result.diff);
     let target = snapshot_summary_from(result.target);
     let base = match result.base {
         SnapshotDiffBase::Current { markdown } => SnapshotDiffBaseResponse {
@@ -562,6 +565,7 @@ pub async fn get_document_snapshot_diff(
         target,
         target_markdown: result.target_markdown,
         base,
+        diff,
     }))
 }
 

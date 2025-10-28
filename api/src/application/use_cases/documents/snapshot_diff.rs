@@ -1,7 +1,9 @@
 use uuid::Uuid;
 
+use crate::application::dto::diff::TextDiffResult;
 use crate::application::ports::document_snapshot_archive_repository::SnapshotArchiveRecord;
 use crate::application::ports::realtime_port::RealtimeEngine;
+use crate::application::services::diff::text_diff::compute_text_diff;
 use crate::application::services::realtime::snapshot::SnapshotService;
 
 pub enum SnapshotDiffBase {
@@ -24,6 +26,7 @@ pub struct SnapshotDiffResult {
     pub target: SnapshotArchiveRecord,
     pub target_markdown: String,
     pub base: SnapshotDiffBase,
+    pub diff: TextDiffResult,
 }
 
 pub struct SnapshotDiff<'a, RT>
@@ -92,9 +95,17 @@ where
             }
         };
 
+        let base_markdown = match &base {
+            SnapshotDiffBase::Current { markdown } => markdown.as_str(),
+            SnapshotDiffBase::Snapshot { markdown, .. } => markdown.as_str(),
+        };
+
+        let diff = compute_text_diff(base_markdown, &target_markdown, "snapshot.md");
+
         Ok(Some(SnapshotDiffResult {
             target: target_record,
             target_markdown,
+            diff,
             base,
         }))
     }

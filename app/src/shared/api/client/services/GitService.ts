@@ -5,9 +5,9 @@
 import type { AddPatternsRequest } from '../models/AddPatternsRequest';
 import type { CheckIgnoredRequest } from '../models/CheckIgnoredRequest';
 import type { CreateGitConfigRequest } from '../models/CreateGitConfigRequest';
+import type { DocumentDiffResult } from '../models/DocumentDiffResult';
 import type { GitChangesResponse } from '../models/GitChangesResponse';
 import type { GitConfigResponse } from '../models/GitConfigResponse';
-import type { GitDiffResult } from '../models/GitDiffResult';
 import type { GitHistoryResponse } from '../models/GitHistoryResponse';
 import type { GitStatus } from '../models/GitStatus';
 import type { GitSyncRequest } from '../models/GitSyncRequest';
@@ -73,7 +73,7 @@ export class GitService {
         });
     }
     /**
-     * @returns GitDiffResult
+     * @returns DocumentDiffResult
      * @throws ApiError
      */
     public static getCommitDiff({
@@ -88,7 +88,7 @@ export class GitService {
          * To
          */
         to: string,
-    }): CancelablePromise<Array<GitDiffResult>> {
+    }): CancelablePromise<Array<DocumentDiffResult>> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/git/diff/commits/{from}/{to}',
@@ -99,10 +99,10 @@ export class GitService {
         });
     }
     /**
-     * @returns GitDiffResult
+     * @returns DocumentDiffResult
      * @throws ApiError
      */
-    public static getWorkingDiff(): CancelablePromise<Array<GitDiffResult>> {
+    public static getWorkingDiff(): CancelablePromise<Array<DocumentDiffResult>> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/git/diff/working',

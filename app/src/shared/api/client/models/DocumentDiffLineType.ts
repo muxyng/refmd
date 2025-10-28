@@ -2,7 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-export enum GitDiffLineType {
+export enum DocumentDiffLineType {
     ADDED = 'added',
     DELETED = 'deleted',
     CONTEXT = 'context',

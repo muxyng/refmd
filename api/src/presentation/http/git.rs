@@ -9,8 +9,11 @@ use utoipa::ToSchema;
 
 use crate::presentation::http::auth::{Bearer, validate_bearer};
 // Config is no longer needed directly here
+use crate::application::dto::diff::{
+    TextDiffLine as DiffLineDto, TextDiffLineType as DiffLineTypeDto,
+    TextDiffResult as DiffResultDto,
+};
 use crate::application::dto::git::{
-    DiffLine as DiffLineDto, DiffLineType as DiffLineTypeDto, DiffResult as DiffResultDto,
     GitChangeItem as GitChangeDto, GitCommitInfo, GitConfigDto, GitStatusDto, GitSyncRequestDto,
     UpsertGitConfigInput,
 };
@@ -462,31 +465,31 @@ pub struct GitHistoryResponse {
 
 #[derive(Debug, Serialize, ToSchema, Clone)]
 #[serde(rename_all = "lowercase")]
-pub enum GitDiffLineType {
+pub enum DocumentDiffLineType {
     Added,
     Deleted,
     Context,
 }
 
-impl From<DiffLineTypeDto> for GitDiffLineType {
+impl From<DiffLineTypeDto> for DocumentDiffLineType {
     fn from(value: DiffLineTypeDto) -> Self {
         match value {
-            DiffLineTypeDto::Added => GitDiffLineType::Added,
-            DiffLineTypeDto::Deleted => GitDiffLineType::Deleted,
-            DiffLineTypeDto::Context => GitDiffLineType::Context,
+            DiffLineTypeDto::Added => DocumentDiffLineType::Added,
+            DiffLineTypeDto::Deleted => DocumentDiffLineType::Deleted,
+            DiffLineTypeDto::Context => DocumentDiffLineType::Context,
         }
     }
 }
 
 #[derive(Debug, Serialize, ToSchema, Clone)]
-pub struct GitDiffLine {
-    pub line_type: GitDiffLineType,
+pub struct DocumentDiffLine {
+    pub line_type: DocumentDiffLineType,
     pub old_line_number: Option<u32>,
     pub new_line_number: Option<u32>,
     pub content: String,
 }
 
-impl From<DiffLineDto> for GitDiffLine {
+impl From<DiffLineDto> for DocumentDiffLine {
     fn from(value: DiffLineDto) -> Self {
         Self {
             line_type: value.line_type.into(),
@@ -498,21 +501,21 @@ impl From<DiffLineDto> for GitDiffLine {
 }
 
 #[derive(Debug, Serialize, ToSchema, Clone)]
-pub struct GitDiffResult {
+pub struct DocumentDiffResult {
     pub file_path: String,
-    pub diff_lines: Vec<GitDiffLine>,
+    pub diff_lines: Vec<DocumentDiffLine>,
     pub old_content: Option<String>,
     pub new_content: Option<String>,
 }
 
-impl From<DiffResultDto> for GitDiffResult {
+impl From<DiffResultDto> for DocumentDiffResult {
     fn from(value: DiffResultDto) -> Self {
         Self {
             file_path: value.file_path,
             diff_lines: value
                 .diff_lines
                 .into_iter()
-                .map(GitDiffLine::from)
+                .map(DocumentDiffLine::from)
                 .collect(),
             old_content: value.old_content,
             new_content: value.new_content,
@@ -552,12 +555,12 @@ pub async fn get_history(
     get,
     path = "/api/git/diff/working",
     tag = "Git",
-    responses((status = 200, body = [GitDiffResult]))
+    responses((status = 200, body = [DocumentDiffResult]))
 )]
 pub async fn get_working_diff(
     State(ctx): State<AppContext>,
     bearer: Bearer,
-) -> Result<Json<Vec<GitDiffResult>>, StatusCode> {
+) -> Result<Json<Vec<DocumentDiffResult>>, StatusCode> {
     let sub = validate_bearer(&ctx.cfg, bearer)?;
     let user_id = uuid::Uuid::parse_str(&sub).map_err(|_| StatusCode::UNAUTHORIZED)?;
     let workspace = ctx.git_workspace();
@@ -568,7 +571,7 @@ pub async fn get_working_diff(
         .execute(user_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let body = diffs.into_iter().map(GitDiffResult::from).collect();
+    let body = diffs.into_iter().map(DocumentDiffResult::from).collect();
     Ok(Json(body))
 }
 
@@ -577,13 +580,13 @@ pub async fn get_working_diff(
     path = "/api/git/diff/commits/{from}/{to}",
     params(("from" = String, Path, description = "From"), ("to" = String, Path, description = "To")),
     tag = "Git",
-    responses((status = 200, body = [GitDiffResult]))
+    responses((status = 200, body = [DocumentDiffResult]))
 )]
 pub async fn get_commit_diff(
     State(ctx): State<AppContext>,
     bearer: Bearer,
     axum::extract::Path((from, to)): axum::extract::Path<(String, String)>,
-) -> Result<Json<Vec<GitDiffResult>>, StatusCode> {
+) -> Result<Json<Vec<DocumentDiffResult>>, StatusCode> {
     let sub = validate_bearer(&ctx.cfg, bearer)?;
     let user_id = uuid::Uuid::parse_str(&sub).map_err(|_| StatusCode::UNAUTHORIZED)?;
     let workspace = ctx.git_workspace();
@@ -594,7 +597,7 @@ pub async fn get_commit_diff(
         .execute(user_id, from, to)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let body = diffs.into_iter().map(GitDiffResult::from).collect();
+    let body = diffs.into_iter().map(DocumentDiffResult::from).collect();
     Ok(Json(body))
 }
 

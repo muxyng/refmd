@@ -3,19 +3,18 @@ import { AlignLeft, Clock, Columns2, DownloadCloud, History as HistoryIcon, Rota
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
-import { SnapshotDiffKind, SnapshotDiffBaseParam, GitDiffLineType } from '@/shared/api'
-import type { SnapshotDiffResponse, SnapshotSummary, GitDiffResult, GitDiffLine } from '@/shared/api'
+import { SnapshotDiffKind, SnapshotDiffBaseParam } from '@/shared/api'
+import type { SnapshotDiffResponse, SnapshotSummary } from '@/shared/api'
 import { overlayPanelClass } from '@/shared/lib/overlay-classes'
 import { cn } from '@/shared/lib/utils'
 import { Alert, AlertDescription } from '@/shared/ui/alert'
+import { Button } from '@/shared/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/shared/ui/dialog'
+import { DiffViewer } from '@/shared/ui/diff-viewer'
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/shared/ui/resizable'
 import { ScrollArea } from '@/shared/ui/scroll-area'
 
 import { documentKeys, downloadSnapshot, snapshotDiffQuery, triggerSnapshotRestore, useDocumentSnapshots } from '@/entities/document'
-
-import { DiffViewer } from '@/features/git-sync/ui/diff-viewer'
-import { Button } from '@/shared/ui/button'
 
 type SnapshotHistoryDialogProps = {
   documentId: string
@@ -302,12 +301,10 @@ export function SnapshotHistoryDialog({ documentId, open, onOpenChange, token, c
 }
 
 function SnapshotDiffViewer({ diff, viewMode }: { diff: SnapshotDiffResponse; viewMode: 'unified' | 'split' }) {
-  const baseMarkdown = diff.base.markdown
-  const diffResult = useMemo(() => buildGitDiffResult(baseMarkdown, diff.target_markdown), [baseMarkdown, diff.target_markdown])
-
   const baseLabel = diff.base.kind === SnapshotDiffKind.SNAPSHOT && diff.base.snapshot
     ? diff.base.snapshot.label || 'Snapshot'
     : 'Current document'
+  const diffResult = diff.diff
 
   return (
     <div className="h-full flex flex-col rounded-lg border bg-background/80 backdrop-blur-sm shadow-sm">
@@ -359,89 +356,4 @@ function formatBytes(bytes: number) {
     idx++
   }
   return `${Math.round(size * 10) / 10} ${units[idx]}`
-}
-
-function buildGitDiffResult(base: string, target: string): GitDiffResult {
-  const oldLines = base.split('\n')
-  const newLines = target.split('\n')
-  const m = oldLines.length
-  const n = newLines.length
-  const dp: number[][] = Array(m + 1)
-    .fill(0)
-    .map(() => Array(n + 1).fill(0))
-
-  for (let i = m - 1; i >= 0; i--) {
-    for (let j = n - 1; j >= 0; j--) {
-      if (oldLines[i] === newLines[j]) dp[i][j] = dp[i + 1][j + 1] + 1
-      else dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1])
-    }
-  }
-
-  const diffLines: GitDiffLine[] = []
-  let i = 0
-  let j = 0
-  let oldLine = 1
-  let newLine = 1
-
-  while (i < m && j < n) {
-    if (oldLines[i] === newLines[j]) {
-      diffLines.push({
-        content: oldLines[i],
-        line_type: GitDiffLineType.CONTEXT,
-        old_line_number: oldLine,
-        new_line_number: newLine,
-      })
-      i++
-      j++
-      oldLine++
-      newLine++
-    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
-      diffLines.push({
-        content: oldLines[i],
-        line_type: GitDiffLineType.DELETED,
-        old_line_number: oldLine,
-        new_line_number: null,
-      })
-      i++
-      oldLine++
-    } else {
-      diffLines.push({
-        content: newLines[j],
-        line_type: GitDiffLineType.ADDED,
-        old_line_number: null,
-        new_line_number: newLine,
-      })
-      j++
-      newLine++
-    }
-  }
-
-  while (i < m) {
-    diffLines.push({
-      content: oldLines[i],
-      line_type: GitDiffLineType.DELETED,
-      old_line_number: oldLine,
-      new_line_number: null,
-    })
-    i++
-    oldLine++
-  }
-
-  while (j < n) {
-    diffLines.push({
-      content: newLines[j],
-      line_type: GitDiffLineType.ADDED,
-      old_line_number: null,
-      new_line_number: newLine,
-    })
-    j++
-    newLine++
-  }
-
-  return {
-    file_path: 'snapshot.md',
-    diff_lines: diffLines,
-    old_content: base,
-    new_content: target,
-  }
 }

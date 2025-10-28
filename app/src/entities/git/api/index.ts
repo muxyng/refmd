@@ -1,5 +1,5 @@
 import { GitService } from '@/shared/api'
-import type { GitDiffResult, GitChangesResponse, GitHistoryResponse, GitStatus } from '@/shared/api'
+import type { DocumentDiffResult, GitChangesResponse, GitHistoryResponse, GitStatus } from '@/shared/api'
 
 export const gitKeys = {
   all: ['git'] as const,
@@ -26,6 +26,6 @@ export async function fetchHistory(): Promise<GitHistoryResponse> {
   return GitService.getHistory()
 }
 
-export async function fetchCommitDiff(from: string, to: string): Promise<GitDiffResult[]> {
+export async function fetchCommitDiff(from: string, to: string): Promise<DocumentDiffResult[]> {
   return GitService.getCommitDiff({ from, to })
 }

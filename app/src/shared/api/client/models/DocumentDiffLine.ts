@@ -2,10 +2,10 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { GitDiffLineType } from './GitDiffLineType';
-export type GitDiffLine = {
+import type { DocumentDiffLineType } from './DocumentDiffLineType';
+export type DocumentDiffLine = {
     content: string;
-    line_type: GitDiffLineType;
+    line_type: DocumentDiffLineType;
     new_line_number?: number | null;
     old_line_number?: number | null;
 };

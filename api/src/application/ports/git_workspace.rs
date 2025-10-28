@@ -1,8 +1,9 @@
 use async_trait::async_trait;
 use uuid::Uuid;
 
+use crate::application::dto::diff::TextDiffResult;
 use crate::application::dto::git::{
-    DiffResult, GitChangeItem, GitCommitInfo, GitSyncOutcome, GitSyncRequestDto, GitWorkspaceStatus,
+    GitChangeItem, GitCommitInfo, GitSyncOutcome, GitSyncRequestDto, GitWorkspaceStatus,
 };
 use crate::application::ports::git_repository::UserGitCfg;
 
@@ -12,13 +13,13 @@ pub trait GitWorkspacePort: Send + Sync {
     async fn remove_repository(&self, user_id: Uuid) -> anyhow::Result<()>;
     async fn status(&self, user_id: Uuid) -> anyhow::Result<GitWorkspaceStatus>;
     async fn list_changes(&self, user_id: Uuid) -> anyhow::Result<Vec<GitChangeItem>>;
-    async fn working_diff(&self, user_id: Uuid) -> anyhow::Result<Vec<DiffResult>>;
+    async fn working_diff(&self, user_id: Uuid) -> anyhow::Result<Vec<TextDiffResult>>;
     async fn commit_diff(
         &self,
         user_id: Uuid,
         from: &str,
         to: &str,
-    ) -> anyhow::Result<Vec<DiffResult>>;
+    ) -> anyhow::Result<Vec<TextDiffResult>>;
     async fn history(&self, user_id: Uuid) -> anyhow::Result<Vec<GitCommitInfo>>;
     async fn sync(
         &self,

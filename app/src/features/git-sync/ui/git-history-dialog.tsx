@@ -2,19 +2,19 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { GitCommit as GitCommitIcon, RefreshCw, User, Clock, AlignLeft, Columns2 } from 'lucide-react'
 import React from 'react'
 
-import type { GitCommitItem, GitDiffResult } from '@/shared/api'
-import { GitDiffLineType } from '@/shared/api'
+import type { GitCommitItem, DocumentDiffResult } from '@/shared/api'
+import { DocumentDiffLineType } from '@/shared/api'
 import { overlayPanelClass } from '@/shared/lib/overlay-classes'
 import { cn } from '@/shared/lib/utils'
 import { Alert, AlertDescription } from '@/shared/ui/alert'
 import { Button } from '@/shared/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/shared/ui/dialog'
+import { DiffViewer } from '@/shared/ui/diff-viewer'
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/shared/ui/resizable'
 import { ScrollArea } from '@/shared/ui/scroll-area'
 
 import { GitService as GitSvc } from '@/entities/git'
 
-import { DiffViewer } from './diff-viewer'
 import { FileExpander } from './file-expander'
 
 type Props = { open: boolean; onOpenChange: (open: boolean) => void }
@@ -22,7 +22,7 @@ type Props = { open: boolean; onOpenChange: (open: boolean) => void }
 export default function GitHistoryDialog({ open, onOpenChange }: Props) {
   const qc = useQueryClient()
   const [selectedCommit, setSelectedCommit] = React.useState<GitCommitItem | null>(null)
-  const [commitDiffs, setCommitDiffs] = React.useState<GitDiffResult[]>([])
+  const [commitDiffs, setCommitDiffs] = React.useState<DocumentDiffResult[]>([])
   const [diffLoading, setDiffLoading] = React.useState(false)
   const [diffError, setDiffError] = React.useState<string | null>(null)
   const [viewMode, setViewMode] = React.useState<'unified' | 'split'>('unified')
@@ -155,8 +155,8 @@ export default function GitHistoryDialog({ open, onOpenChange }: Props) {
                           {commitDiffs.map((d) => {
                             const fp = d.file_path || ''
                             const isExp = expanded.has(fp)
-                            const adds = d.diff_lines.filter((l) => l.line_type === GitDiffLineType.ADDED).length
-                            const dels = d.diff_lines.filter((l) => l.line_type === GitDiffLineType.DELETED).length
+                            const adds = d.diff_lines.filter((l) => l.line_type === DocumentDiffLineType.ADDED).length
+                            const dels = d.diff_lines.filter((l) => l.line_type === DocumentDiffLineType.DELETED).length
                             return (
                               <FileExpander key={fp} filePath={fp} isExpanded={isExp} onToggle={() => toggle(fp)} stats={{ additions: adds, deletions: dels }}>
                                 <div className="p-4">

@@ -2,9 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { GitDiffLine } from './GitDiffLine';
-export type GitDiffResult = {
-    diff_lines: Array<GitDiffLine>;
+import type { DocumentDiffLine } from './DocumentDiffLine';
+export type DocumentDiffResult = {
+    diff_lines: Array<DocumentDiffLine>;
     file_path: string;
     new_content?: string | null;
     old_content?: string | null;
