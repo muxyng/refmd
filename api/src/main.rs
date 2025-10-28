@@ -40,6 +40,10 @@ use utoipa_swagger_ui::SwaggerUi;
             api::presentation::http::documents::delete_document,
             api::presentation::http::documents::get_document_content,
             api::presentation::http::documents::download_document,
+            api::presentation::http::documents::list_document_snapshots,
+            api::presentation::http::documents::get_document_snapshot_diff,
+            api::presentation::http::documents::restore_document_snapshot,
+            api::presentation::http::documents::download_document_snapshot,
             api::presentation::http::documents::search_documents,
             api::presentation::http::documents::get_backlinks,
             api::presentation::http::documents::get_outgoing_links,
@@ -198,8 +202,20 @@ async fn main() -> anyhow::Result<()> {
             ),
         };
 
+    let snapshot_archive_repo: Arc<
+        dyn api::application::ports::document_snapshot_archive_repository::DocumentSnapshotArchiveRepository,
+    > = Arc::new(
+        api::infrastructure::db::repositories::document_snapshot_archive_repository_sqlx::SqlxDocumentSnapshotArchiveRepository::new(
+            pool.clone(),
+        ),
+    );
+
     // Build Realtime Hub
-    let hub = api::infrastructure::realtime::Hub::new(pool.clone(), storage_port.clone());
+    let hub = api::infrastructure::realtime::Hub::new(
+        pool.clone(),
+        storage_port.clone(),
+        snapshot_archive_repo.clone(),
+    );
     let document_repo = Arc::new(
         api::infrastructure::db::repositories::document_repository_sqlx::SqlxDocumentRepository::new(
             pool.clone(),
@@ -250,20 +266,31 @@ async fn main() -> anyhow::Result<()> {
             storage_port.clone(),
         )?,
     );
-    let realtime_engine: Arc<dyn api::application::ports::realtime_port::RealtimeEngine> =
-        if cfg.cluster_mode {
-            tracing::info!("cluster_mode_enabled");
-            Arc::new(
-                api::infrastructure::realtime::RedisRealtimeEngine::from_config(
-                    &cfg,
-                    pool.clone(),
-                    storage_port.clone(),
-                )?,
-            )
-        } else {
-            tracing::info!("cluster_mode_disabled_using_local_hub");
-            Arc::new(api::infrastructure::realtime::LocalRealtimeEngine { hub: hub.clone() })
-        };
+    let (realtime_engine, snapshot_service_arc): (
+        Arc<dyn api::application::ports::realtime_port::RealtimeEngine>,
+        Arc<api::application::services::realtime::snapshot::SnapshotService>,
+    ) = if cfg.cluster_mode {
+        tracing::info!("cluster_mode_enabled");
+        let engine = Arc::new(
+            api::infrastructure::realtime::RedisRealtimeEngine::from_config(
+                &cfg,
+                pool.clone(),
+                storage_port.clone(),
+            )?,
+        );
+        let snapshot_service = engine.snapshot_service();
+        let engine_trait: Arc<dyn api::application::ports::realtime_port::RealtimeEngine> =
+            engine.clone();
+        (engine_trait, snapshot_service)
+    } else {
+        tracing::info!("cluster_mode_disabled_using_local_hub");
+        let engine =
+            Arc::new(api::infrastructure::realtime::LocalRealtimeEngine { hub: hub.clone() });
+        let snapshot_service = hub.snapshot_service();
+        let engine_trait: Arc<dyn api::application::ports::realtime_port::RealtimeEngine> =
+            engine.clone();
+        (engine_trait, snapshot_service)
+    };
     let plugin_repo = Arc::new(
         api::infrastructure::db::repositories::plugin_repository_sqlx::SqlxPluginRepository::new(
             pool.clone(),
@@ -382,6 +409,8 @@ async fn main() -> anyhow::Result<()> {
         git_workspace,
         storage_port,
         realtime_engine.clone(),
+        snapshot_service_arc.clone(),
+        snapshot_archive_repo.clone(),
         plugin_repo,
         plugin_installations,
         plugin_runtime.clone(),

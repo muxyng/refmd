@@ -6,6 +6,7 @@ import { buildCanonicalUrl, buildOgImageUrl } from '@/entities/public'
 
 import { documentBeforeLoadGuard, useAuthContext } from '@/features/auth'
 import { BacklinksPanel } from '@/features/document-backlinks'
+import { SnapshotHistoryDialog } from '@/features/document-snapshots'
 import { EditorOverlay, MarkdownEditor, useViewContext } from '@/features/edit-document'
 import { usePluginDocumentRedirect } from '@/features/plugins'
 import { useSecondaryViewer } from '@/features/secondary-viewer'
@@ -137,6 +138,7 @@ function DocumentClient({
 }) {
   const navigate = useNavigate()
   const { user } = useAuthContext()
+  const [showSnapshots, setShowSnapshots] = useState(false)
   const { secondaryDocumentId, secondaryDocumentType, showSecondaryViewer, closeSecondaryViewer, openSecondaryViewer } = useSecondaryViewer()
   const { showBacklinks, setShowBacklinks } = useViewContext()
   const { status, doc, awareness, isReadOnly, error: realtimeError } = useCollaborativeDocument(id, shareToken)
@@ -250,6 +252,7 @@ function DocumentClient({
           userName={user?.name || anonIdentity?.name}
           documentId={id}
           readOnly={isReadOnly}
+          onOpenSnapshots={() => setShowSnapshots(true)}
           extraRight={showBacklinks ? (
             <BacklinksPanel documentId={id} className="h-full" onClose={() => setShowBacklinks(false)} />
           ) : (showSecondaryViewer && secondaryDocumentId ? (
@@ -263,6 +266,13 @@ function DocumentClient({
             ) : undefined)}
         />
       )}
+      <SnapshotHistoryDialog
+        documentId={id}
+        open={showSnapshots}
+        onOpenChange={setShowSnapshots}
+        token={shareToken}
+        canRestore={!isReadOnly}
+      />
     </div>
   )
 }

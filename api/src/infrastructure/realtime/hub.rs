@@ -16,6 +16,7 @@ use yrs::{Doc, ReadTxn, StateVector, Transact, Update};
 use yrs_warp::AwarenessRef;
 use yrs_warp::broadcast::BroadcastGroup;
 
+use crate::application::ports::document_snapshot_archive_repository::DocumentSnapshotArchiveRepository;
 use crate::application::ports::linkgraph_repository::LinkGraphRepository;
 use crate::application::ports::realtime_hydration_port::{DocStateReader, RealtimeBacklogReader};
 use crate::application::ports::realtime_persistence_port::DocPersistencePort;
@@ -24,7 +25,9 @@ use crate::application::ports::tagging_repository::TaggingRepository;
 use crate::application::services::realtime::doc_hydration::{
     DocHydrationService, HydrationOptions,
 };
-use crate::application::services::realtime::snapshot::{SnapshotPersistOptions, SnapshotService};
+use crate::application::services::realtime::snapshot::{
+    SnapshotArchiveKind, SnapshotArchiveOptions, SnapshotPersistOptions, SnapshotService,
+};
 use crate::infrastructure::db::PgPool;
 use crate::infrastructure::db::repositories::linkgraph_repository_sqlx::SqlxLinkGraphRepository;
 use crate::infrastructure::db::repositories::tagging_repository_sqlx::SqlxTaggingRepository;
@@ -53,7 +56,11 @@ pub struct Hub {
 }
 
 impl Hub {
-    pub fn new(pool: PgPool, storage: Arc<dyn StoragePort>) -> Self {
+    pub fn new(
+        pool: PgPool,
+        storage: Arc<dyn StoragePort>,
+        archives: Arc<dyn DocumentSnapshotArchiveRepository>,
+    ) -> Self {
         let doc_state_reader: Arc<dyn DocStateReader> =
             Arc::new(SqlxDocStateReader::new(pool.clone()));
         let backlog_reader: Arc<dyn RealtimeBacklogReader> = Arc::new(NoopBacklogReader::default());
@@ -73,6 +80,7 @@ impl Hub {
             storage,
             linkgraph_repo,
             tagging_repo,
+            archives,
         ));
 
         Self {
@@ -126,7 +134,7 @@ impl Hub {
                     );
                 }
                 if s % 100 == 0 {
-                    if let Err(e) = snapshot_service
+                    match snapshot_service
                         .persist_snapshot(
                             &persist_doc,
                             &doc_for_snap,
@@ -137,12 +145,38 @@ impl Hub {
                         )
                         .await
                     {
-                        tracing::error!(
-                            document_id = %persist_doc,
-                            version = s,
-                            error = ?e,
-                            "persist_document_snapshot_failed"
-                        );
+                        Ok(result) => {
+                            let label = format!("Auto snapshot #{}", result.version);
+                            if let Err(e) = snapshot_service
+                                .archive_snapshot(
+                                    &persist_doc,
+                                    &doc_for_snap,
+                                    result.version,
+                                    SnapshotArchiveOptions {
+                                        label: label.as_str(),
+                                        notes: None,
+                                        kind: SnapshotArchiveKind::Automatic,
+                                        created_by: None,
+                                    },
+                                )
+                                .await
+                            {
+                                tracing::debug!(
+                                    document_id = %persist_doc,
+                                    version = result.version,
+                                    error = ?e,
+                                    "persist_document_snapshot_archive_failed"
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                document_id = %persist_doc,
+                                version = s,
+                                error = ?e,
+                                "persist_document_snapshot_failed"
+                            );
+                        }
                     }
                 }
             }
@@ -274,6 +308,36 @@ impl Hub {
             }
         });
         Ok(room)
+    }
+
+    pub fn snapshot_service(&self) -> Arc<SnapshotService> {
+        self.snapshot_service.clone()
+    }
+
+    pub async fn apply_snapshot(&self, doc_id: &str, snapshot: &Doc) -> anyhow::Result<()> {
+        let room = self.get_or_create(doc_id).await?;
+        let current_sv = {
+            let txn = room.doc.transact();
+            txn.state_vector()
+        };
+        let update_bytes = {
+            let txn = snapshot.transact();
+            txn.encode_state_as_update_v1(&current_sv)
+        };
+        let update = Update::decode_v1(&update_bytes)?;
+        {
+            let mut txn = room.doc.transact_mut();
+            txn.apply_update(update)?;
+        }
+        let mut encoder = EncoderV1::new();
+        encoder.write_var(MSG_SYNC);
+        encoder.write_var(MSG_SYNC_UPDATE);
+        encoder.write_buf(&update_bytes);
+        let frame = encoder.to_vec();
+        if let Err(e) = room.broadcast.broadcast(frame) {
+            tracing::debug!(document_id = %doc_id, error = %e, "hub_broadcast_snapshot_failed");
+        }
+        Ok(())
     }
 
     pub async fn get_content(&self, doc_id: &str) -> anyhow::Result<Option<String>> {

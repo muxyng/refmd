@@ -17,6 +17,7 @@ use yrs::updates::encoder::{Encoder, EncoderV1};
 use yrs::{Doc, GetString, ReadTxn, StateVector, Transact};
 
 use crate::application::ports::awareness_port::AwarenessPublisher;
+use crate::application::ports::document_snapshot_archive_repository::DocumentSnapshotArchiveRepository;
 use crate::application::ports::linkgraph_repository::LinkGraphRepository;
 use crate::application::ports::realtime_hydration_port::{DocStateReader, RealtimeBacklogReader};
 use crate::application::ports::realtime_persistence_port::DocPersistencePort;
@@ -28,9 +29,12 @@ use crate::application::services::realtime::awareness::{AwarenessService, encode
 use crate::application::services::realtime::doc_hydration::{
     DocHydrationService, HydrationOptions,
 };
-use crate::application::services::realtime::snapshot::{SnapshotPersistOptions, SnapshotService};
+use crate::application::services::realtime::snapshot::{
+    SnapshotArchiveKind, SnapshotArchiveOptions, SnapshotPersistOptions, SnapshotService,
+};
 use crate::bootstrap::config::Config;
 use crate::infrastructure::db::PgPool;
+use crate::infrastructure::db::repositories::document_snapshot_archive_repository_sqlx::SqlxDocumentSnapshotArchiveRepository;
 use crate::infrastructure::db::repositories::linkgraph_repository_sqlx::SqlxLinkGraphRepository;
 use crate::infrastructure::db::repositories::tagging_repository_sqlx::SqlxTaggingRepository;
 use crate::infrastructure::realtime::{SqlxDocPersistenceAdapter, SqlxDocStateReader};
@@ -78,12 +82,15 @@ impl RedisRealtimeEngine {
             Arc::new(SqlxLinkGraphRepository::new(pool.clone()));
         let tagging_repo: Arc<dyn TaggingRepository> =
             Arc::new(SqlxTaggingRepository::new(pool.clone()));
+        let archive_repo: Arc<dyn DocumentSnapshotArchiveRepository> =
+            Arc::new(SqlxDocumentSnapshotArchiveRepository::new(pool.clone()));
         let snapshot_service = Arc::new(SnapshotService::new(
             doc_state_reader,
             doc_persistence,
             storage.clone(),
             linkgraph_repo,
             tagging_repo,
+            archive_repo,
         ));
 
         let trim_lifetime = if cfg.redis_min_message_lifetime_ms > 0 {
@@ -108,6 +115,10 @@ impl RedisRealtimeEngine {
             awareness_ttl: Duration::from_millis(cfg.redis_awareness_ttl_ms),
             _worker: worker,
         })
+    }
+
+    pub fn snapshot_service(&self) -> Arc<SnapshotService> {
+        self.snapshot_service.clone()
     }
 
     async fn send_initial_sync(&self, doc: &Doc, sink: &DynRealtimeSink) -> anyhow::Result<()> {
@@ -362,6 +373,29 @@ impl RealtimeEngineTrait for RedisRealtimeEngine {
             .await?;
         Ok(())
     }
+
+    async fn apply_snapshot(&self, doc_id: &str, doc: &Doc) -> anyhow::Result<()> {
+        let uuid = Uuid::parse_str(doc_id)?;
+        let hydrated = self
+            .hydration_service
+            .hydrate(&uuid, HydrationOptions::default())
+            .await?;
+        let current_sv = {
+            let txn = hydrated.doc.transact();
+            txn.state_vector()
+        };
+        let update_bytes = {
+            let txn = doc.transact();
+            txn.encode_state_as_update_v1(&current_sv)
+        };
+        let mut encoder = EncoderV1::new();
+        encoder.write_var(MSG_SYNC);
+        encoder.write_var(MSG_SYNC_UPDATE);
+        encoder.write_buf(&update_bytes);
+        let frame = encoder.to_vec();
+        self.bus.publish_update(doc_id, frame).await?;
+        Ok(())
+    }
 }
 
 fn analyse_frame(frame: &[u8]) -> anyhow::Result<FrameSummary> {
@@ -428,7 +462,7 @@ fn spawn_persistence_worker(
                                     "redis_worker_markdown_failed"
                                 );
                             }
-                            if let Err(e) = snapshot_service
+                            match snapshot_service
                                 .persist_snapshot(
                                     &doc_uuid,
                                     &hydrated.doc,
@@ -439,11 +473,37 @@ fn spawn_persistence_worker(
                                 )
                                 .await
                             {
-                                tracing::error!(
-                                    document_id = %doc_uuid,
-                                    error = ?e,
-                                    "redis_worker_snapshot_failed"
-                                );
+                                Ok(result) => {
+                                    let label = format!("Auto snapshot #{}", result.version);
+                                    if let Err(e) = snapshot_service
+                                        .archive_snapshot(
+                                            &doc_uuid,
+                                            &hydrated.doc,
+                                            result.version,
+                                            SnapshotArchiveOptions {
+                                                label: label.as_str(),
+                                                notes: None,
+                                                kind: SnapshotArchiveKind::Automatic,
+                                                created_by: None,
+                                            },
+                                        )
+                                        .await
+                                    {
+                                        tracing::debug!(
+                                            document_id = %doc_uuid,
+                                            version = result.version,
+                                            error = ?e,
+                                            "redis_worker_snapshot_archive_failed"
+                                        );
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::error!(
+                                        document_id = %doc_uuid,
+                                        error = ?e,
+                                        "redis_worker_snapshot_failed"
+                                    );
+                                }
                             }
                             if let Err(e) = bus.ack_task(&entry_id).await {
                                 tracing::debug!(

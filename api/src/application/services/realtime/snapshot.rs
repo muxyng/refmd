@@ -1,9 +1,16 @@
 use std::sync::Arc;
 
+use anyhow::anyhow;
+use sha2::{Digest, Sha256};
+use tokio::task;
 use uuid::Uuid;
-use yrs::{Doc, GetString, ReadTxn, StateVector, Transact};
+use yrs::updates::decoder::Decode;
+use yrs::{Doc, GetString, ReadTxn, StateVector, Transact, Update};
 
 use crate::application::linkgraph;
+use crate::application::ports::document_snapshot_archive_repository::{
+    DocumentSnapshotArchiveRepository, SnapshotArchiveInsert, SnapshotArchiveRecord,
+};
 use crate::application::ports::linkgraph_repository::LinkGraphRepository;
 use crate::application::ports::realtime_hydration_port::DocStateReader;
 use crate::application::ports::realtime_persistence_port::DocPersistencePort;
@@ -17,6 +24,7 @@ pub struct SnapshotService {
     storage: Arc<dyn StoragePort>,
     linkgraph_repo: Arc<dyn LinkGraphRepository>,
     tagging_repo: Arc<dyn TaggingRepository>,
+    archive_repo: Arc<dyn DocumentSnapshotArchiveRepository>,
 }
 
 pub struct SnapshotPersistOptions {
@@ -43,6 +51,31 @@ pub struct MarkdownPersistResult {
     pub written: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum SnapshotArchiveKind {
+    Manual,
+    Automatic,
+    Restore,
+}
+
+impl SnapshotArchiveKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SnapshotArchiveKind::Manual => "manual",
+            SnapshotArchiveKind::Automatic => "auto",
+            SnapshotArchiveKind::Restore => "restore",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SnapshotArchiveOptions<'a> {
+    pub label: &'a str,
+    pub notes: Option<&'a str>,
+    pub kind: SnapshotArchiveKind,
+    pub created_by: Option<&'a Uuid>,
+}
+
 impl SnapshotService {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -51,6 +84,7 @@ impl SnapshotService {
         storage: Arc<dyn StoragePort>,
         linkgraph_repo: Arc<dyn LinkGraphRepository>,
         tagging_repo: Arc<dyn TaggingRepository>,
+        archive_repo: Arc<dyn DocumentSnapshotArchiveRepository>,
     ) -> Self {
         Self {
             state_reader,
@@ -58,6 +92,7 @@ impl SnapshotService {
             storage,
             linkgraph_repo,
             tagging_repo,
+            archive_repo,
         }
     }
 
@@ -146,6 +181,73 @@ impl SnapshotService {
             written: should_write,
         })
     }
+
+    pub async fn archive_snapshot(
+        &self,
+        doc_id: &Uuid,
+        doc: &Doc,
+        version: i64,
+        options: SnapshotArchiveOptions<'_>,
+    ) -> anyhow::Result<SnapshotArchiveRecord> {
+        let snapshot_bin = {
+            let txn = doc.transact();
+            txn.encode_state_as_update_v1(&StateVector::default())
+        };
+        let byte_size = snapshot_bin.len() as i64;
+        let hash = sha256_hex(&snapshot_bin);
+        let record = self
+            .archive_repo
+            .insert(SnapshotArchiveInsert {
+                document_id: doc_id,
+                version,
+                snapshot: &snapshot_bin,
+                label: options.label,
+                notes: options.notes,
+                kind: options.kind.as_str(),
+                created_by: options.created_by,
+                byte_size,
+                content_hash: &hash,
+            })
+            .await?;
+        Ok(record)
+    }
+
+    pub async fn list_archives(
+        &self,
+        doc_id: Uuid,
+        limit: i64,
+        offset: i64,
+    ) -> anyhow::Result<Vec<SnapshotArchiveRecord>> {
+        self.archive_repo
+            .list_for_document(doc_id, limit, offset)
+            .await
+    }
+
+    pub async fn load_archive_doc(
+        &self,
+        archive_id: Uuid,
+    ) -> anyhow::Result<Option<(SnapshotArchiveRecord, Doc)>> {
+        let Some((record, bytes)) = self.archive_repo.get_by_id(archive_id).await? else {
+            return Ok(None);
+        };
+        let doc = Doc::new();
+        let doc_for_update = doc.clone();
+        task::spawn_blocking(move || apply_update_bytes(&doc_for_update, &bytes))
+            .await
+            .map_err(|e| anyhow!("snapshot_archive_apply_join: {e}"))??;
+        Ok(Some((record, doc)))
+    }
+
+    pub async fn load_archive_markdown(
+        &self,
+        archive_id: Uuid,
+    ) -> anyhow::Result<Option<(SnapshotArchiveRecord, String)>> {
+        if let Some((record, doc)) = self.load_archive_doc(archive_id).await? {
+            let markdown = extract_markdown(&doc);
+            return Ok(Some((record, markdown)));
+        }
+        Ok(None)
+    }
 }
 
 fn extract_markdown(doc: &Doc) -> String {
@@ -153,4 +255,18 @@ fn extract_markdown(doc: &Doc) -> String {
     let txn = doc.transact();
     let contents = txt.get_string(&txn);
     contents
+}
+
+fn sha256_hex(data: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    let digest = hasher.finalize();
+    hex::encode(digest)
+}
+
+fn apply_update_bytes(doc: &Doc, bytes: &[u8]) -> anyhow::Result<()> {
+    let update = Update::decode_v1(bytes)?;
+    let mut txn = doc.transact_mut();
+    txn.apply_update(update)?;
+    Ok(())
 }

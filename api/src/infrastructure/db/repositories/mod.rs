@@ -1,5 +1,6 @@
 pub mod access_repository_sqlx;
 pub mod document_repository_sqlx;
+pub mod document_snapshot_archive_repository_sqlx;
 pub mod files_repository_sqlx;
 pub mod git_repository_sqlx;
 pub mod linkgraph_repository_sqlx;

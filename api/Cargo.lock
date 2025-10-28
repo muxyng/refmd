@@ -172,6 +172,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "git2",
+ "hex",
  "htmlescape",
  "http 1.3.1",
  "jsonwebtoken",

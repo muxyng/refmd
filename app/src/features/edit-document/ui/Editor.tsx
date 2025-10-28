@@ -50,11 +50,12 @@ export type MarkdownEditorProps = {
   documentId: string
   readOnly?: boolean
   extraRight?: React.ReactNode
+  onOpenSnapshots?: () => void
 }
 
 
 export function MarkdownEditor(props: MarkdownEditorProps) {
-  const { doc, awareness, initialView: initialViewProp = 'split', userId, userName, documentId, readOnly = false, extraRight } = props
+  const { doc, awareness, initialView: initialViewProp = 'split', userId, userName, documentId, readOnly = false, extraRight, onOpenSnapshots } = props
   const { isDarkMode } = useTheme()
   const isMobile = useIsMobile()
   const { setEditor } = useEditorContext()
@@ -331,8 +332,9 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
       onVimModeToggle={toggleVim}
       onFileUpload={readOnly ? undefined : handleFileUpload}
       readOnly={readOnly}
+      onShowSnapshots={onOpenSnapshots}
     />
-  ), [handleToolbarCommand, view, syncScroll, isVimMode, toggleVim, handleFileUpload, readOnly])
+  ), [handleToolbarCommand, view, syncScroll, isVimMode, toggleVim, handleFileUpload, readOnly, onOpenSnapshots])
 
   const onPreviewNavigate = useCallback(async (target: string) => {
     const uuidRe = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/

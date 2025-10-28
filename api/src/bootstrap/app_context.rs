@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::application::ports::access_repository::AccessRepository;
 use crate::application::ports::document_repository::DocumentRepository;
+use crate::application::ports::document_snapshot_archive_repository::DocumentSnapshotArchiveRepository;
 use crate::application::ports::files_repository::FilesRepository;
 use crate::application::ports::git_repository::GitRepository;
 use crate::application::ports::git_storage::GitStorage;
@@ -22,6 +23,7 @@ use crate::application::ports::shares_repository::SharesRepository;
 use crate::application::ports::storage_port::StoragePort;
 use crate::application::ports::tag_repository::TagRepository;
 use crate::application::ports::user_repository::UserRepository;
+use crate::application::services::realtime::snapshot::SnapshotService;
 use crate::bootstrap::config::Config;
 use futures_util::stream::BoxStream;
 
@@ -49,6 +51,8 @@ pub struct AppServices {
     git_workspace: Arc<dyn GitWorkspacePort>,
     storage_port: Arc<dyn StoragePort>,
     realtime_engine: Arc<dyn RealtimeEngine>,
+    snapshot_service: Arc<SnapshotService>,
+    snapshot_archives: Arc<dyn DocumentSnapshotArchiveRepository>,
     plugin_repo: Arc<dyn PluginRepository>,
     plugin_installations: Arc<dyn PluginInstallationRepository>,
     plugin_runtime: Arc<dyn PluginRuntime>,
@@ -76,6 +80,8 @@ impl AppServices {
         git_workspace: Arc<dyn GitWorkspacePort>,
         storage_port: Arc<dyn StoragePort>,
         realtime_engine: Arc<dyn RealtimeEngine>,
+        snapshot_service: Arc<SnapshotService>,
+        snapshot_archives: Arc<dyn DocumentSnapshotArchiveRepository>,
         plugin_repo: Arc<dyn PluginRepository>,
         plugin_installations: Arc<dyn PluginInstallationRepository>,
         plugin_runtime: Arc<dyn PluginRuntime>,
@@ -100,6 +106,8 @@ impl AppServices {
             git_workspace,
             storage_port,
             realtime_engine,
+            snapshot_service,
+            snapshot_archives,
             plugin_repo,
             plugin_installations,
             plugin_runtime,
@@ -174,6 +182,14 @@ impl AppContext {
 
     pub fn realtime_engine(&self) -> Arc<dyn RealtimeEngine> {
         self.services.realtime_engine.clone()
+    }
+
+    pub fn snapshot_service(&self) -> Arc<SnapshotService> {
+        self.services.snapshot_service.clone()
+    }
+
+    pub fn snapshot_archives(&self) -> Arc<dyn DocumentSnapshotArchiveRepository> {
+        self.services.snapshot_archives.clone()
     }
 
     pub fn plugin_repo(&self) -> Arc<dyn PluginRepository> {

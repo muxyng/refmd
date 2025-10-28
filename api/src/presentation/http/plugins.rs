@@ -753,14 +753,9 @@ pub async fn exec_action(
             if let Some(doc_id) = extract_doc_id(payload) {
                 let share_access = ctx.share_access_port();
                 let access_repo = ctx.access_repo();
-                access::require_edit(
-                    access_repo.as_ref(),
-                    share_access.as_ref(),
-                    &actor,
-                    doc_id,
-                )
-                .await
-                .map_err(|_| StatusCode::FORBIDDEN)?;
+                access::require_edit(access_repo.as_ref(), share_access.as_ref(), &actor, doc_id)
+                    .await
+                    .map_err(|_| StatusCode::FORBIDDEN)?;
             } else {
                 return Err(StatusCode::FORBIDDEN);
             }

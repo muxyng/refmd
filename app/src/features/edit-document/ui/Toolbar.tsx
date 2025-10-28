@@ -4,6 +4,7 @@ import {
   Bold,
   CheckSquare,
   Code,
+  History,
   Heading1,
   Italic,
   Link as LinkIcon,
@@ -34,6 +35,7 @@ export interface EditorToolbarProps {
   isVimMode?: boolean
   onVimModeToggle?: () => void
   readOnly?: boolean
+  onShowSnapshots?: () => void
 }
 
 interface ToolbarButton {
@@ -53,6 +55,7 @@ function EditorToolbarComponent({
   isVimMode,
   onVimModeToggle,
   readOnly,
+  onShowSnapshots,
 }: EditorToolbarProps) {
   const buttonClass = cn(
     'h-10 w-10 rounded-2xl border border-border/40 bg-muted/40 text-muted-foreground transition-colors',
@@ -112,7 +115,7 @@ function EditorToolbarComponent({
   }, [onCommand, readOnly])
 
   const hasUtilityControls = Boolean(
-    (onFileUpload && !readOnly) || (viewMode === 'split' && onSyncScrollToggle) || onVimModeToggle,
+    (onFileUpload && !readOnly) || (viewMode === 'split' && onSyncScrollToggle) || onVimModeToggle || onShowSnapshots,
   )
 
   return (
@@ -181,6 +184,24 @@ function EditorToolbarComponent({
                   onToggle={onVimModeToggle}
                   className={cn(buttonClass, 'font-semibold')}
                 />
+              )}
+
+              {onShowSnapshots && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={onShowSnapshots}
+                        className={buttonClass}
+                      >
+                        <History className="h-4 w-4" />
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>Open snapshots</TooltipContent>
+                </Tooltip>
               )}
             </div>
           </div>

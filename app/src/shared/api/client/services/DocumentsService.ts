@@ -9,6 +9,9 @@ import type { DocumentArchiveBinary } from '../models/DocumentArchiveBinary';
 import type { DocumentListResponse } from '../models/DocumentListResponse';
 import type { OutgoingLinksResponse } from '../models/OutgoingLinksResponse';
 import type { SearchResult } from '../models/SearchResult';
+import type { SnapshotDiffResponse } from '../models/SnapshotDiffResponse';
+import type { SnapshotListResponse } from '../models/SnapshotListResponse';
+import type { SnapshotRestoreResponse } from '../models/SnapshotRestoreResponse';
 import type { UpdateDocumentRequest } from '../models/UpdateDocumentRequest';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
@@ -237,6 +240,158 @@ export class DocumentsService {
             url: '/api/documents/{id}/links',
             path: {
                 'id': id,
+            },
+        });
+    }
+    /**
+     * @returns SnapshotListResponse
+     * @throws ApiError
+     */
+    public static listDocumentSnapshots({
+        id,
+        token,
+        limit,
+        offset,
+    }: {
+        /**
+         * Document ID
+         */
+        id: string,
+        /**
+         * Share token (optional)
+         */
+        token?: string | null,
+        /**
+         * Maximum number of snapshots to return
+         */
+        limit?: number | null,
+        /**
+         * Offset for pagination
+         */
+        offset?: number | null,
+    }): CancelablePromise<SnapshotListResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/documents/{id}/snapshots',
+            path: {
+                'id': id,
+            },
+            query: {
+                'token': token,
+                'limit': limit,
+                'offset': offset,
+            },
+        });
+    }
+    /**
+     * @returns SnapshotDiffResponse
+     * @throws ApiError
+     */
+    public static getDocumentSnapshotDiff({
+        id,
+        snapshotId,
+        token,
+        compare,
+    }: {
+        /**
+         * Document ID
+         */
+        id: string,
+        /**
+         * Snapshot ID
+         */
+        snapshotId: string,
+        /**
+         * Share token (optional)
+         */
+        token?: string | null,
+        /**
+         * Snapshot ID to compare against (defaults to current document state)
+         */
+        compare?: string | null,
+    }): CancelablePromise<SnapshotDiffResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/documents/{id}/snapshots/{snapshot_id}/diff',
+            path: {
+                'id': id,
+                'snapshot_id': snapshotId,
+            },
+            query: {
+                'token': token,
+                'compare': compare,
+            },
+        });
+    }
+    /**
+     * @returns DocumentArchiveBinary Snapshot archive
+     * @throws ApiError
+     */
+    public static downloadDocumentSnapshot({
+        id,
+        snapshotId,
+        token,
+    }: {
+        /**
+         * Document ID
+         */
+        id: string,
+        /**
+         * Snapshot ID
+         */
+        snapshotId: string,
+        /**
+         * Share token (optional)
+         */
+        token?: string | null,
+    }): CancelablePromise<DocumentArchiveBinary> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/documents/{id}/snapshots/{snapshot_id}/download',
+            path: {
+                'id': id,
+                'snapshot_id': snapshotId,
+            },
+            query: {
+                'token': token,
+            },
+            errors: {
+                401: `Unauthorized`,
+                404: `Snapshot not found`,
+            },
+        });
+    }
+    /**
+     * @returns SnapshotRestoreResponse
+     * @throws ApiError
+     */
+    public static restoreDocumentSnapshot({
+        id,
+        snapshotId,
+        token,
+    }: {
+        /**
+         * Document ID
+         */
+        id: string,
+        /**
+         * Snapshot ID
+         */
+        snapshotId: string,
+        /**
+         * Share token (optional)
+         */
+        token?: string | null,
+    }): CancelablePromise<SnapshotRestoreResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/documents/{id}/snapshots/{snapshot_id}/restore',
+            path: {
+                'id': id,
+                'snapshot_id': snapshotId,
+            },
+            query: {
+                'token': token,
             },
         });
     }
