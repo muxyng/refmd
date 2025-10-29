@@ -37,7 +37,15 @@ where
                 .await
                 .unwrap_or(false);
             if owns {
-                Capability::Edit
+                let archived = access_repo
+                    .is_document_archived(doc_id)
+                    .await
+                    .unwrap_or(false);
+                if archived {
+                    Capability::View
+                } else {
+                    Capability::Edit
+                }
             } else {
                 Capability::None
             }
@@ -47,6 +55,13 @@ where
             if let Ok(Some((share_id, perm, expires_at, shared_id, shared_type))) =
                 shares_repo.resolve_share_by_token(t).await
             {
+                if access_repo
+                    .is_document_archived(doc_id)
+                    .await
+                    .unwrap_or(false)
+                {
+                    return Capability::None;
+                }
                 // Check expiration
                 if let Some(exp) = expires_at {
                     if exp < chrono::Utc::now() {
@@ -89,6 +104,7 @@ where
                 .await
                 .unwrap_or(false);
             if is_pub {
+                // Public documents remain view-only even when archived.
                 Capability::View
             } else {
                 Capability::None

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::Context;
 use chrono::Utc;
@@ -33,6 +34,7 @@ use crate::application::services::realtime::snapshot::{
 use crate::infrastructure::db::PgPool;
 use crate::infrastructure::db::repositories::linkgraph_repository_sqlx::SqlxLinkGraphRepository;
 use crate::infrastructure::db::repositories::tagging_repository_sqlx::SqlxTaggingRepository;
+use crate::infrastructure::realtime::utils::wrap_stream_with_edit_guard;
 use crate::infrastructure::realtime::{
     DynRealtimeSink, DynRealtimeStream, NoopBacklogReader, SqlxDocPersistenceAdapter,
     SqlxDocStateReader,
@@ -57,6 +59,7 @@ pub struct Hub {
     save_flags: Arc<Mutex<HashMap<String, bool>>>,
     auto_archive_interval: Duration,
     last_auto_archive: Arc<Mutex<HashMap<String, Instant>>>,
+    edit_flags: Arc<RwLock<HashMap<String, Arc<AtomicBool>>>>,
 }
 
 impl Hub {
@@ -96,6 +99,7 @@ impl Hub {
             save_flags: Arc::new(Mutex::new(HashMap::new())),
             auto_archive_interval,
             last_auto_archive: Arc::new(Mutex::new(HashMap::new())),
+            edit_flags: Arc::new(RwLock::new(HashMap::new())),
         }
     }
     pub async fn get_or_create(&self, doc_id: &str) -> anyhow::Result<Arc<DocumentRoom>> {
@@ -268,6 +272,7 @@ impl Hub {
             .write()
             .await
             .insert(doc_id.to_string(), room.clone());
+        let _ = self.ensure_edit_flag(doc_id).await;
         // Hydrate in background (snapshot + updates). Non-blocking for WS subscription
         let bcast_h = bcast.clone();
         let hydration = self.hydration_service.clone();
@@ -446,15 +451,19 @@ impl Hub {
         can_edit: bool,
     ) -> anyhow::Result<()> {
         let room = self.get_or_create(doc_id).await?;
-        let subscription = if can_edit {
-            room.broadcast.subscribe(sink.clone(), stream)
+        let edit_flag = self.ensure_edit_flag(doc_id).await;
+        let effective_can_edit = can_edit && edit_flag.load(Ordering::Relaxed);
+        let guarded_stream =
+            wrap_stream_with_edit_guard(stream, doc_id.to_string(), edit_flag.clone());
+        let subscription = if effective_can_edit {
+            room.broadcast.subscribe(sink.clone(), guarded_stream)
         } else {
             room.broadcast
-                .subscribe_with(sink.clone(), stream, ReadOnlyProtocol)
+                .subscribe_with(sink.clone(), guarded_stream, ReadOnlyProtocol)
         };
 
         let awareness = room.awareness.clone();
-        if can_edit {
+        if effective_can_edit {
             Self::send_protocol_start(sink, awareness, DefaultProtocol).await?;
         } else {
             Self::send_protocol_start(sink, awareness, ReadOnlyProtocol).await?;
@@ -464,6 +473,20 @@ impl Hub {
             .completed()
             .await
             .map_err(|e| anyhow::anyhow!(e))
+    }
+
+    async fn ensure_edit_flag(&self, doc_id: &str) -> Arc<AtomicBool> {
+        let mut guard = self.edit_flags.write().await;
+        guard
+            .entry(doc_id.to_string())
+            .or_insert_with(|| Arc::new(AtomicBool::new(true)))
+            .clone()
+    }
+
+    pub async fn set_document_editable(&self, doc_id: &str, editable: bool) -> anyhow::Result<()> {
+        let flag = self.ensure_edit_flag(doc_id).await;
+        flag.store(editable, Ordering::SeqCst);
+        Ok(())
     }
 }
 

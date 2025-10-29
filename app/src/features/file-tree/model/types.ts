@@ -5,5 +5,5 @@ export type DocumentNode = {
   children?: DocumentNode[]
   created_at?: string
   updated_at?: string
+  archived?: boolean
 }
-

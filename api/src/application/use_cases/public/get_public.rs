@@ -13,7 +13,18 @@ impl<'a, R: PublicRepository + ?Sized> GetPublicByOwnerAndId<'a, R> {
         owner_name: &str,
         doc_id: Uuid,
     ) -> anyhow::Result<Option<Document>> {
-        if let Some((id, title, parent_id, doc_type, created_at, updated_at, path)) = self
+        if let Some((
+            id,
+            title,
+            parent_id,
+            doc_type,
+            created_at,
+            updated_at,
+            path,
+            archived_at,
+            archived_by,
+            archived_parent_id,
+        )) = self
             .repo
             .get_public_meta_by_owner_and_id(owner_name, doc_id)
             .await?
@@ -26,6 +37,9 @@ impl<'a, R: PublicRepository + ?Sized> GetPublicByOwnerAndId<'a, R> {
                 created_at,
                 updated_at,
                 path,
+                archived_at,
+                archived_by,
+                archived_parent_id,
             }))
         } else {
             Ok(None)

@@ -1,6 +1,6 @@
 "use client"
 
-import { ChevronRight, ChevronDown, Folder, FolderOpen, Plus, Edit, Trash2, MoreHorizontal, Users, Share2, Link as LinkIcon, Ban } from 'lucide-react'
+import { ChevronRight, ChevronDown, Folder, FolderOpen, Plus, Edit, Trash2, MoreHorizontal, Users, Share2, Link as LinkIcon, Ban, Archive, ArchiveRestore } from 'lucide-react'
 import React, { useState, useCallback, memo, useEffect, useRef } from 'react'
 import { toast } from 'sonner'
 
@@ -9,11 +9,12 @@ import { overlayMenuClass } from '@/shared/lib/overlay-classes'
 import { cn } from '@/shared/lib/utils'
 import { Button } from '@/shared/ui/button'
 import ConfirmDialog from '@/shared/ui/confirm-dialog'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/shared/ui/dropdown-menu'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/shared/ui/dropdown-menu'
 import { Input } from '@/shared/ui/input'
 import { SidebarMenuItem, SidebarMenuButton, SidebarMenuSub } from '@/shared/ui/sidebar'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip'
 
+import { useArchiveDocument, useUnarchiveDocument } from '@/entities/document'
 import { GitService } from '@/entities/git'
 
 import { useFileTree, type DocumentNode } from '@/features/file-tree'
@@ -60,13 +61,23 @@ export const FolderNode = memo(function FolderNode({
   onDragOver,
   renderChildren,
 }: FolderNodeProps) {
-  const { sharedFolderIds, underSharedFolderFolderIds, renameTarget, clearRenameTarget } = useFileTree()
+  const {
+    sharedFolderIds,
+    underSharedFolderFolderIds,
+    renameTarget,
+    clearRenameTarget,
+    refreshDocuments,
+    setArchivesExpanded,
+  } = useFileTree()
   const [isEditing, setIsEditing] = useState(false)
   const [editingTitle, setEditingTitle] = useState(node.title)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const isMobile = useIsMobile()
   const [shareOpen, setShareOpen] = useState(false)
   const menuGuardRef = useRef<{ block: boolean; timer?: number }>({ block: false })
+  const isArchived = Boolean(node.archived)
+  const archiveMutation = useArchiveDocument()
+  const unarchiveMutation = useUnarchiveDocument()
 
   const handleMenuOpenChange = useCallback((open: boolean) => {
     if (open) {
@@ -97,30 +108,68 @@ export const FolderNode = memo(function FolderNode({
 
   const handleToggle = useCallback((e: React.MouseEvent) => { e.stopPropagation(); onToggle(node.id) }, [node.id, onToggle])
   const handleStartRename = useCallback(() => {
+    if (isArchived) return
     setIsEditing(true)
     setEditingTitle(node.title)
-  }, [node.title])
+  }, [node.title, isArchived])
   const handleCancelRename = useCallback(() => {
     setIsEditing(false)
     setEditingTitle('')
     clearRenameTarget()
   }, [clearRenameTarget])
   const handleSaveRename = useCallback(() => {
+    if (isArchived) return
     if (editingTitle.trim()) onRename(node.id, editingTitle.trim())
     setIsEditing(false)
     clearRenameTarget()
-  }, [editingTitle, node.id, onRename, clearRenameTarget])
+  }, [editingTitle, node.id, onRename, clearRenameTarget, isArchived])
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => { if (e.key === 'Enter') handleSaveRename(); else if (e.key === 'Escape') handleCancelRename() }, [handleSaveRename, handleCancelRename])
   const handleDelete = useCallback(() => { onDelete(node.id); setShowDeleteDialog(false) }, [node.id, onDelete])
-  const handleCreateDocument = useCallback((e?: React.MouseEvent) => { e?.stopPropagation(); onCreateNew(node.id, false) }, [node.id, onCreateNew])
-  const handleCreateFolder = useCallback((e?: React.MouseEvent) => { e?.stopPropagation(); onCreateNew(node.id, true) }, [node.id, onCreateNew])
+  const handleCreateDocument = useCallback((e?: React.MouseEvent) => {
+    e?.stopPropagation()
+    if (isArchived) return
+    onCreateNew(node.id, false)
+  }, [node.id, onCreateNew, isArchived])
+  const handleCreateFolder = useCallback((e?: React.MouseEvent) => {
+    e?.stopPropagation()
+    if (isArchived) return
+    onCreateNew(node.id, true)
+  }, [node.id, onCreateNew, isArchived])
+  const handleArchive = useCallback(async () => {
+    try {
+      await archiveMutation.mutateAsync(node.id)
+      refreshDocuments()
+      setArchivesExpanded(true)
+      toast.success('Folder archived')
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refmd:document-archive-change', { detail: { id: node.id } }))
+      }
+    } catch (error) {
+      console.error('[file-tree] archive folder failed', error)
+      toast.error('Failed to archive folder')
+    }
+  }, [archiveMutation, node.id, refreshDocuments, setArchivesExpanded])
+
+  const handleUnarchive = useCallback(async () => {
+    try {
+      await unarchiveMutation.mutateAsync(node.id)
+      refreshDocuments()
+      toast.success('Folder unarchived')
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refmd:document-archive-change', { detail: { id: node.id } }))
+      }
+    } catch (error) {
+      console.error('[file-tree] unarchive folder failed', error)
+      toast.error('Failed to unarchive folder')
+    }
+  }, [node.id, refreshDocuments, unarchiveMutation])
 
   useEffect(() => {
-    if (renameTarget === node.id && !isEditing) {
+    if (renameTarget === node.id && !isEditing && !isArchived) {
       setIsEditing(true)
       setEditingTitle(node.title)
     }
-  }, [renameTarget, node.id, node.title, isEditing])
+  }, [renameTarget, node.id, node.title, isEditing, isArchived])
 
   const shouldShowDropHighlight = isDropTarget || (hasChildDropTarget && isExpanded)
   const actionButtonClass = 'h-8 w-8 rounded-xl border border-border/40 bg-background/70 text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground'
@@ -132,16 +181,43 @@ export const FolderNode = memo(function FolderNode({
         'relative rounded-2xl border border-transparent transition-colors duration-150 ease-out',
         shouldShowDropHighlight && 'border-primary/40 bg-primary/10',
         isSelected && 'border-primary/40 bg-primary/10 shadow-sm',
+        isArchived && 'border-dashed border-border/40 opacity-80'
       )}
     >
       <div
-        draggable={!isEditing}
-        onDragStart={(e) => onDragStart(e, node.id)}
-        onDragEnd={onDragEnd}
-        onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); onDragOver(e, node.id, 'folder') }}
-        onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); onDragEnter(e, node.id, 'folder') }}
-        onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); onDragLeave(e) }}
-        onDrop={(e) => { e.preventDefault(); e.stopPropagation(); onDrop(e, node.id, 'folder') }}
+        draggable={!isEditing && !isArchived}
+        onDragStart={(e) => {
+          if (isArchived) return
+          onDragStart(e, node.id)
+        }}
+        onDragEnd={(e) => {
+          if (isArchived) return
+          onDragEnd(e)
+        }}
+        onDragOver={(e) => {
+          if (isArchived) return
+          e.preventDefault()
+          e.stopPropagation()
+          onDragOver(e, node.id, 'folder')
+        }}
+        onDragEnter={(e) => {
+          if (isArchived) return
+          e.preventDefault()
+          e.stopPropagation()
+          onDragEnter(e, node.id, 'folder')
+        }}
+        onDragLeave={(e) => {
+          if (isArchived) return
+          e.preventDefault()
+          e.stopPropagation()
+          onDragLeave(e)
+        }}
+        onDrop={(e) => {
+          if (isArchived) return
+          e.preventDefault()
+          e.stopPropagation()
+          onDrop(e, node.id, 'folder')
+        }}
         className={cn('relative w-full group/folder rounded-2xl', isDropTarget && !isExpanded && 'border border-primary/40 bg-primary/10')}
       >
         {isEditing ? (
@@ -168,6 +244,7 @@ export const FolderNode = memo(function FolderNode({
                 'flex-1 h-11 rounded-2xl border border-transparent bg-background/60 px-2.5 text-sm font-medium text-muted-foreground backdrop-blur-sm transition-colors',
                 isDragging && 'opacity-50',
                 isSelected ? 'border-primary/40 bg-primary/15 text-foreground shadow-sm' : 'hover:bg-background/75 hover:text-foreground',
+                isArchived && 'text-muted-foreground/80'
               )}
               onClick={handleToggle}
             >
@@ -179,31 +256,30 @@ export const FolderNode = memo(function FolderNode({
               </span>
               <div className="flex min-w-0 flex-1 items-center gap-1.5">
                 <span className="min-w-0 truncate" title={node.title}>{node.title}</span>
-                {sharedFolderIds.has(node.id) && (
+                {(isArchived || sharedFolderIds.has(node.id) || underSharedFolderFolderIds.has(node.id)) && (
                   <span className="inline-flex shrink-0 items-center gap-1 text-muted-foreground">
-                    <Share2 className="h-3 w-3" />
-                  </span>
-                )}
-                {underSharedFolderFolderIds.has(node.id) && (
-                  <span className="inline-flex shrink-0 items-center gap-1 text-muted-foreground">
-                    <LinkIcon className="h-3 w-3" />
+                    {isArchived && <Archive className="h-3 w-3" />}
+                    {sharedFolderIds.has(node.id) && <Share2 className="h-3 w-3" />}
+                    {underSharedFolderFolderIds.has(node.id) && <LinkIcon className="h-3 w-3" />}
                   </span>
                 )}
               </div>
             </SidebarMenuButton>
             <div className={cn('flex items-center gap-2 pl-2 transition-opacity', isMobile ? 'opacity-100' : 'opacity-0 group-hover/folder:opacity-100')}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span>
-                    <Button variant="ghost" size="icon" className={actionButtonClass} onClick={handleCreateDocument}>
-                      <Plus className="h-3 w-3" />
-                    </Button>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>Add document</p>
-                </TooltipContent>
-              </Tooltip>
+              {!isArchived && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span>
+                      <Button variant="ghost" size="icon" className={actionButtonClass} onClick={handleCreateDocument}>
+                        <Plus className="h-3 w-3" />
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Add document</p>
+                  </TooltipContent>
+                </Tooltip>
+              )}
               <DropdownMenu onOpenChange={handleMenuOpenChange}>
                 <DropdownMenuTrigger asChild>
                   <span>
@@ -213,10 +289,22 @@ export const FolderNode = memo(function FolderNode({
                   </span>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className={overlayMenuClass}>
-                  <DropdownMenuItem onSelect={(event) => guardMenuAction(event, () => handleCreateDocument())}><Plus className="h-4 w-4 mr-2" />New Document</DropdownMenuItem>
-                  <DropdownMenuItem onSelect={(event) => guardMenuAction(event, () => handleCreateFolder())}><Folder className="h-4 w-4 mr-2" />New Folder</DropdownMenuItem>
-                  <DropdownMenuItem onSelect={(event) => guardMenuAction(event, () => setShareOpen(true))}><Users className="h-4 w-4 mr-2" />Share Folder</DropdownMenuItem>
-                  <DropdownMenuItem onSelect={(event) => guardMenuAction(event, handleStartRename)}><Edit className="h-4 w-4 mr-2" />Rename</DropdownMenuItem>
+                  {!isArchived && (
+                    <>
+                      <DropdownMenuItem onSelect={(event) => guardMenuAction(event, () => handleCreateDocument())}>
+                        <Plus className="h-4 w-4 mr-2" />New Document
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={(event) => guardMenuAction(event, () => handleCreateFolder())}>
+                        <Folder className="h-4 w-4 mr-2" />New Folder
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={(event) => guardMenuAction(event, () => setShareOpen(true))}>
+                        <Users className="h-4 w-4 mr-2" />Share Folder
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={(event) => guardMenuAction(event, handleStartRename)}>
+                        <Edit className="h-4 w-4 mr-2" />Rename
+                      </DropdownMenuItem>
+                    </>
+                  )}
                   <DropdownMenuItem onSelect={(event) => guardMenuAction(event, async () => {
                     try {
                       const r = await GitService.ignoreFolder({ id: node.id })
@@ -228,7 +316,26 @@ export const FolderNode = memo(function FolderNode({
                   })}>
                     <Ban className="h-4 w-4 mr-2" />Ignore Folder in Git
                   </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={(event) => guardMenuAction(event, () => setShowDeleteDialog(true))} className="text-red-600"><Trash2 className="h-4 w-4 mr-2" />Delete</DropdownMenuItem>
+                  {!isArchived && (
+                    <DropdownMenuItem
+                      onSelect={(event) => guardMenuAction(event, handleArchive)}
+                      disabled={archiveMutation.isPending}
+                    >
+                      <Archive className="h-4 w-4 mr-2" />Archive
+                    </DropdownMenuItem>
+                  )}
+                  {isArchived && (
+                    <DropdownMenuItem
+                      onSelect={(event) => guardMenuAction(event, handleUnarchive)}
+                      disabled={unarchiveMutation.isPending}
+                    >
+                      <ArchiveRestore className="h-4 w-4 mr-2" />Unarchive
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={(event) => guardMenuAction(event, () => setShowDeleteDialog(true))} className="text-red-600">
+                    <Trash2 className="h-4 w-4 mr-2" />Delete
+                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>

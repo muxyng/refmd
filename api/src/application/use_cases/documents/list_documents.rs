@@ -1,6 +1,6 @@
 use uuid::Uuid;
 
-use crate::application::ports::document_repository::DocumentRepository;
+use crate::application::ports::document_repository::{DocumentListState, DocumentRepository};
 use crate::domain::documents::document::Document as DomainDocument;
 
 pub struct ListDocuments<'a, R: DocumentRepository + ?Sized> {
@@ -13,7 +13,8 @@ impl<'a, R: DocumentRepository + ?Sized> ListDocuments<'a, R> {
         user_id: Uuid,
         query: Option<String>,
         tag: Option<String>,
+        state: DocumentListState,
     ) -> anyhow::Result<Vec<DomainDocument>> {
-        self.repo.list_for_user(user_id, query, tag).await
+        self.repo.list_for_user(user_id, query, tag, state).await
     }
 }

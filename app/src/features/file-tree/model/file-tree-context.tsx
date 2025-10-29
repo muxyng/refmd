@@ -12,6 +12,7 @@ import type { DocumentNode } from '@/features/file-tree/model/types'
 
 type CtxType = {
   documents: DocumentNode[]
+  archivedDocuments: DocumentNode[]
   expandedFolders: Set<string>
   loading: boolean
   sharedDocIds: Set<string>
@@ -20,6 +21,8 @@ type CtxType = {
   underSharedFolderDocIds: Set<string>
   underSharedFolderFolderIds: Set<string>
   shareToken: string
+  archivesExpanded: boolean
+  setArchivesExpanded: React.Dispatch<React.SetStateAction<boolean>>
   toggleFolder: (id: string) => void
   expandFolder: (id: string) => void
   expandParentFolders: (id: string) => void
@@ -39,9 +42,16 @@ type DbDoc = {
   created_at: string
   updated_at: string
   type?: 'document' | 'folder'
+  archived_at?: string | null
+  archived_parent_id?: string | null
 }
 
-function buildTree(docs: DbDoc[]): DocumentNode[] {
+type BuildTreeOptions = {
+  useArchivedParent?: boolean
+}
+
+function buildTree(docs: DbDoc[], options?: BuildTreeOptions): DocumentNode[] {
+  const useArchivedParent = options?.useArchivedParent ?? false
   const nodeMap = new Map<string, DocumentNode>()
   docs.forEach((d) => {
     const type: DocumentNode['type'] = d.type === 'folder' ? 'folder' : 'file'
@@ -52,12 +62,16 @@ function buildTree(docs: DbDoc[]): DocumentNode[] {
       children: [],
       created_at: d.created_at,
       updated_at: d.updated_at,
+      archived: Boolean(d.archived_at),
     })
   })
   const roots: DocumentNode[] = []
   docs.forEach((d) => {
     const node = nodeMap.get(d.id)!
-    const pid = d.parent_id ?? undefined
+    let pid = (useArchivedParent ? d.archived_parent_id : d.parent_id) ?? undefined
+    if (useArchivedParent && pid && !nodeMap.has(pid)) {
+      pid = undefined
+    }
     if (pid && nodeMap.has(pid)) {
       const parent = nodeMap.get(pid)!
       parent.children!.push(node)
@@ -88,6 +102,8 @@ export function FileTreeProvider({ children }: { children: React.ReactNode }) {
   const qc = useQueryClient()
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [inited, setInited] = useState(false)
+  const [archivesExpanded, setArchivesExpanded] = useState(false)
+  const [archivesInited, setArchivesInited] = useState(false)
   const [renameTarget, setRenameTarget] = useState<string | null>(null)
 
   const { data: me } = useQuery({
@@ -125,13 +141,48 @@ export function FileTreeProvider({ children }: { children: React.ReactNode }) {
     }
   }, [expanded, inited, userId])
 
+  const archivesStorageKey = `file-tree-archives-${userId || 'default'}`
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      const saved = localStorage.getItem(archivesStorageKey)
+      if (saved != null) setArchivesExpanded(saved === '1')
+    } catch {
+      /* noop */
+    }
+    setArchivesInited(true)
+  }, [archivesStorageKey])
+
+  useEffect(() => {
+    if (!archivesInited) return
+    if (typeof window === 'undefined') return
+    try {
+      localStorage.setItem(archivesStorageKey, archivesExpanded ? '1' : '0')
+    } catch {
+      /* noop */
+    }
+  }, [archivesExpanded, archivesInited, archivesStorageKey])
+
   const { data: documentsUser = [], isLoading: isLoadingUser } = useQuery({
-    queryKey: ['documents', userId],
+    queryKey: ['documents', userId, 'active'],
     enabled: !!userId && !isShare,
     queryFn: async () => {
-      const res = await listDocuments({})
+      const res = await listDocuments({ state: 'active' })
       const items = (res.items ?? []) as unknown as DbDoc[]
       return buildTree(items)
+    },
+    staleTime: 5 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
+  })
+
+  const { data: archivedDocumentsUser = [], isLoading: isLoadingArchived } = useQuery({
+    queryKey: ['documents', userId, 'archived'],
+    enabled: !!userId && !isShare,
+    queryFn: async () => {
+      const res = await listDocuments({ state: 'archived' })
+      const items = (res.items ?? []) as unknown as DbDoc[]
+      return buildTree(items, { useArchivedParent: true })
     },
     staleTime: 5 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
@@ -157,7 +208,8 @@ export function FileTreeProvider({ children }: { children: React.ReactNode }) {
   })
 
   const docs = isShare ? documentsShare : documentsUser
-  const loading = isShare ? isLoadingShare : isLoadingUser
+  const archivedDocs = isShare ? [] : archivedDocumentsUser
+  const loading = isShare ? isLoadingShare : isLoadingUser || isLoadingArchived
 
   type ActiveShareItem = {
     document_id: string
@@ -289,14 +341,15 @@ export function FileTreeProvider({ children }: { children: React.ReactNode }) {
     if (isShare) {
       qc.invalidateQueries({ queryKey: ['share-documents', shareToken] })
     } else {
-      qc.invalidateQueries({ queryKey: ['documents', userId] })
+      qc.invalidateQueries({ queryKey: ['documents', userId, 'active'] })
+      qc.invalidateQueries({ queryKey: ['documents', userId, 'archived'] })
     }
   }, [qc, isShare, shareToken, userId])
 
   const updateDocuments = useCallback(
     (nextDocs: DocumentNode[]) => {
       if (isShare) qc.setQueryData(['share-documents', shareToken], nextDocs)
-      else qc.setQueryData(['documents', userId], nextDocs)
+      else qc.setQueryData(['documents', userId, 'active'], nextDocs)
     },
     [isShare, qc, shareToken, userId],
   )
@@ -307,6 +360,7 @@ export function FileTreeProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<CtxType>(
     () => ({
       documents: docs,
+      archivedDocuments: archivedDocs,
       expandedFolders: expanded,
       loading,
       sharedDocIds,
@@ -315,6 +369,8 @@ export function FileTreeProvider({ children }: { children: React.ReactNode }) {
       underSharedFolderDocIds,
       underSharedFolderFolderIds,
       shareToken,
+      archivesExpanded,
+      setArchivesExpanded,
       toggleFolder,
       expandFolder,
       expandParentFolders,
@@ -327,9 +383,11 @@ export function FileTreeProvider({ children }: { children: React.ReactNode }) {
     [
       clearRenameTarget,
       docs,
+      archivedDocs,
       expandFolder,
       expandParentFolders,
       expanded,
+      archivesExpanded,
       loading,
       publicDocIds,
       refreshDocuments,
@@ -339,6 +397,7 @@ export function FileTreeProvider({ children }: { children: React.ReactNode }) {
       sharedFolderIds,
       underSharedFolderDocIds,
       underSharedFolderFolderIds,
+      setArchivesExpanded,
       toggleFolder,
       updateDocuments,
     ],

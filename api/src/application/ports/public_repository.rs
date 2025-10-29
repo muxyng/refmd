@@ -41,6 +41,9 @@ pub trait PublicRepository: Send + Sync {
             chrono::DateTime<chrono::Utc>,
             chrono::DateTime<chrono::Utc>,
             Option<String>,
+            Option<chrono::DateTime<chrono::Utc>>,
+            Option<Uuid>,
+            Option<Uuid>,
         )>,
     >;
     async fn public_exists_by_owner_and_id(

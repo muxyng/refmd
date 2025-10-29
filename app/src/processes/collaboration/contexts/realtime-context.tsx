@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useMemo, useState, type ReactNode } from 'react'
+import React, { createContext, useContext, useMemo, useState, useCallback, type ReactNode } from 'react'
 
 export type DocumentHeaderAction = {
   id?: string
@@ -46,6 +46,14 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
   const [documentStatus, setDocumentStatusState] = useState<string | undefined>(undefined)
   const [documentBadge, setDocumentBadgeState] = useState<string | undefined>(undefined)
   const [documentActions, setDocumentActionsState] = useState<DocumentHeaderAction[]>([])
+  const setDocumentTitle = useCallback((title?: string | null) => setDocumentTitleState(title ?? undefined), [])
+  const setDocumentPath = useCallback((pathValue?: string | null) => setDocumentPathState(pathValue ?? undefined), [])
+  const setDocumentId = useCallback((identifier?: string | null) => setDocumentIdState(identifier ?? undefined), [])
+  const setShowEditorFeatures = useCallback((value: boolean) => setShowEditorFeaturesState(value), [])
+  const setDocumentStatus = useCallback((status?: string | null) => setDocumentStatusState(status ?? undefined), [])
+  const setDocumentBadge = useCallback((badge?: string | null) => setDocumentBadgeState(badge ?? undefined), [])
+  const setDocumentActions = useCallback((actions: DocumentHeaderAction[]) => setDocumentActionsState(actions), [])
+
   const value = useMemo(() => ({
     connected,
     userCount,
@@ -60,13 +68,13 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
     setConnected,
     setUserCount,
     setOnlineUsers,
-    setDocumentTitle: (title?: string | null) => setDocumentTitleState(title ?? undefined),
-    setDocumentPath: (pathValue?: string | null) => setDocumentPathState(pathValue ?? undefined),
-    setDocumentId: (identifier?: string | null) => setDocumentIdState(identifier ?? undefined),
-    setShowEditorFeatures: (value: boolean) => setShowEditorFeaturesState(value),
-    setDocumentStatus: (status?: string | null) => setDocumentStatusState(status ?? undefined),
-    setDocumentBadge: (badge?: string | null) => setDocumentBadgeState(badge ?? undefined),
-    setDocumentActions: (actions: DocumentHeaderAction[]) => setDocumentActionsState(actions),
+    setDocumentTitle,
+    setDocumentPath,
+    setDocumentId,
+    setShowEditorFeatures,
+    setDocumentStatus,
+    setDocumentBadge,
+    setDocumentActions,
   }), [
     connected,
     userCount,
@@ -78,6 +86,16 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
     documentStatus,
     documentBadge,
     documentActions,
+    setConnected,
+    setUserCount,
+    setOnlineUsers,
+    setDocumentTitle,
+    setDocumentPath,
+    setDocumentId,
+    setShowEditorFeatures,
+    setDocumentStatus,
+    setDocumentBadge,
+    setDocumentActions,
   ])
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

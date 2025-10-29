@@ -15,7 +15,8 @@ import type {
 
 export const documentKeys = {
   all: ['documents'] as const,
-  list: (params?: { query?: string; tag?: string }) => ['documents','list', params ?? {}] as const,
+  list: (params?: { query?: string; tag?: string; state?: 'active' | 'archived' | 'all' }) =>
+    ['documents', 'list', params ?? {}] as const,
   byId: (id: string) => ['documents', id] as const,
   backlinks: (id: string) => ['documents', id, 'backlinks'] as const,
   links: (id: string) => ['documents', id, 'links'] as const,
@@ -28,10 +29,19 @@ export const documentKeys = {
   ) => ['documents', id, 'snapshot', snapshotId, compare ?? 'current', base ?? 'auto'] as const,
 }
 
-export const listDocumentsQuery = (params?: { query?: string; tag?: string }) => ({
-  queryKey: documentKeys.list(params),
-  queryFn: () => DocumentsService.listDocuments(params ?? {}) as Promise<DocumentListResponse>,
-})
+export const listDocumentsQuery = (params?: { query?: string; tag?: string; state?: 'active' | 'archived' | 'all' }) => {
+  const state = params?.state ?? 'active'
+  const finalParams = { ...(params ?? {}), state }
+  return {
+    queryKey: documentKeys.list(finalParams),
+    queryFn: () =>
+      DocumentsService.listDocuments({
+        query: params?.query ?? null,
+        tag: params?.tag ?? null,
+        state,
+      }) as Promise<DocumentListResponse>,
+  }
+}
 
 export const backlinksQuery = (id: string) => ({
   queryKey: documentKeys.backlinks(id),
@@ -147,6 +157,28 @@ export function useCreateDocument() {
   })
 }
 
+export function useArchiveDocument(options?: { onSuccess?: (document: ApiDocument, id: string) => void }) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (id: string) => DocumentsService.archiveDocument({ id }) as Promise<ApiDocument>,
+    onSuccess: (doc, id) => {
+      qc.invalidateQueries({ queryKey: documentKeys.all })
+      options?.onSuccess?.(doc, id)
+    },
+  })
+}
+
+export function useUnarchiveDocument(options?: { onSuccess?: (document: ApiDocument, id: string) => void }) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (id: string) => DocumentsService.unarchiveDocument({ id }) as Promise<ApiDocument>,
+    onSuccess: (doc, id) => {
+      qc.invalidateQueries({ queryKey: documentKeys.all })
+      options?.onSuccess?.(doc, id)
+    },
+  })
+}
+
 export type Document = ApiDocument
 export { DocumentsService }
 
@@ -159,8 +191,12 @@ export async function fetchDocumentContent(id: string) {
   return DocumentsService.getDocumentContent({ id })
 }
 
-export async function listDocuments(params?: { query?: string | null; tag?: string | null }) {
-  return DocumentsService.listDocuments({ query: params?.query ?? null, tag: params?.tag ?? null })
+export async function listDocuments(params?: { query?: string | null; tag?: string | null; state?: 'active' | 'archived' | 'all' }) {
+  return DocumentsService.listDocuments({
+    query: params?.query ?? null,
+    tag: params?.tag ?? null,
+    state: params?.state ?? 'active',
+  })
 }
 
 export async function createDocument(input: { title?: string; parent_id?: string | null; type?: 'folder' | 'document' }) {

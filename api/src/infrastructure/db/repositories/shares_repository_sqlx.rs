@@ -359,6 +359,34 @@ impl SharesRepository for SqlxSharesRepository {
         .await?;
         Ok(created)
     }
+
+    async fn revoke_subtree_shares(&self, owner_id: Uuid, root_id: Uuid) -> anyhow::Result<i64> {
+        let deleted = sqlx::query_scalar::<_, i64>(
+            r#"
+            WITH RECURSIVE subtree AS (
+                SELECT id FROM documents WHERE id = $1 AND owner_id = $2
+                UNION ALL
+                SELECT d.id
+                FROM documents d
+                JOIN subtree sb ON d.parent_id = sb.id
+                WHERE d.owner_id = $2
+            ),
+            removed AS (
+                DELETE FROM shares s
+                USING subtree sb
+                WHERE s.document_id = sb.id
+                  AND s.created_by = $2
+                RETURNING 1
+            )
+            SELECT COALESCE(COUNT(*), 0) FROM removed
+            "#,
+        )
+        .bind(root_id)
+        .bind(owner_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(deleted)
+    }
 }
 
 #[async_trait]

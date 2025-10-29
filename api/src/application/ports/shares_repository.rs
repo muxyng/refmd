@@ -77,4 +77,6 @@ pub trait SharesRepository: Send + Sync {
     async fn list_materialized_children(&self, parent_share_id: Uuid) -> anyhow::Result<Vec<Uuid>>;
 
     async fn materialize_folder_share(&self, owner_id: Uuid, token: &str) -> anyhow::Result<i64>;
+
+    async fn revoke_subtree_shares(&self, owner_id: Uuid, root_id: Uuid) -> anyhow::Result<i64>;
 }

@@ -1,21 +1,20 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, anyhow};
 use chrono::Utc;
 use futures_util::{SinkExt, StreamExt};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, sleep};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use uuid::Uuid;
-use yrs::encoding::read::Cursor;
 use yrs::encoding::write::Write as YWrite;
 use yrs::sync::awareness::Awareness;
 use yrs::sync::protocol::{MSG_SYNC, MSG_SYNC_UPDATE};
-use yrs::sync::{DefaultProtocol, Message, MessageReader, Protocol, SyncMessage};
-use yrs::updates::decoder::DecoderV1;
+use yrs::sync::{DefaultProtocol, Protocol};
 use yrs::updates::encoder::{Encoder, EncoderV1};
 use yrs::{Doc, GetString, ReadTxn, StateVector, Text, Transact};
 
@@ -40,6 +39,7 @@ use crate::infrastructure::db::PgPool;
 use crate::infrastructure::db::repositories::document_snapshot_archive_repository_sqlx::SqlxDocumentSnapshotArchiveRepository;
 use crate::infrastructure::db::repositories::linkgraph_repository_sqlx::SqlxLinkGraphRepository;
 use crate::infrastructure::db::repositories::tagging_repository_sqlx::SqlxTaggingRepository;
+use crate::infrastructure::realtime::utils::{analyse_frame, wrap_stream_with_edit_guard};
 use crate::infrastructure::realtime::{SqlxDocPersistenceAdapter, SqlxDocStateReader};
 
 use super::cluster_bus::{RedisClusterBus, StreamItem};
@@ -51,6 +51,7 @@ pub struct RedisRealtimeEngine {
     task_debounce: Duration,
     awareness_ttl: Duration,
     _worker: Option<JoinHandle<()>>,
+    edit_flags: Arc<RwLock<HashMap<String, Arc<AtomicBool>>>>,
 }
 
 impl RedisRealtimeEngine {
@@ -122,6 +123,7 @@ impl RedisRealtimeEngine {
             task_debounce: Duration::from_millis(cfg.redis_task_debounce_ms),
             awareness_ttl: Duration::from_millis(cfg.redis_awareness_ttl_ms),
             _worker: worker,
+            edit_flags: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -204,6 +206,14 @@ impl RedisRealtimeEngine {
             }
         })
     }
+
+    async fn ensure_edit_flag(&self, doc_id: &str) -> Arc<AtomicBool> {
+        let mut guard = self.edit_flags.write().await;
+        guard
+            .entry(doc_id.to_string())
+            .or_insert_with(|| Arc::new(AtomicBool::new(true)))
+            .clone()
+    }
 }
 
 #[async_trait::async_trait]
@@ -212,7 +222,7 @@ impl RealtimeEngineTrait for RedisRealtimeEngine {
         &self,
         doc_id: &str,
         sink: DynRealtimeSink,
-        mut stream: DynRealtimeStream,
+        stream: DynRealtimeStream,
         can_edit: bool,
     ) -> anyhow::Result<()> {
         let doc_uuid = Uuid::parse_str(doc_id)?;
@@ -232,6 +242,11 @@ impl RealtimeEngineTrait for RedisRealtimeEngine {
         let mut awareness_handle: Option<JoinHandle<()>> = None;
 
         let result: anyhow::Result<()> = async {
+            let edit_flag = self.ensure_edit_flag(doc_id).await;
+            let session_can_edit = can_edit && edit_flag.load(Ordering::Relaxed);
+            let mut guarded_stream =
+                wrap_stream_with_edit_guard(stream, doc_id.to_string(), edit_flag.clone());
+
             self.send_initial_sync(&hydrated.doc, &sink).await?;
             self.flush_awareness_backlog(
                 &sink,
@@ -244,9 +259,13 @@ impl RealtimeEngineTrait for RedisRealtimeEngine {
                 let mut guard = sink.lock().await;
                 let _ = guard.send(frame).await;
             }
-            Self::send_protocol_start(sink.clone(), awareness_service.awareness())
-                .await
-                .context("redis_cluster_send_protocol_start")?;
+            Self::send_protocol_start(
+                sink.clone(),
+                awareness_service.awareness(),
+                session_can_edit,
+            )
+            .await
+            .context("redis_cluster_send_protocol_start")?;
 
             let updates_stream = self
                 .bus
@@ -272,12 +291,13 @@ impl RealtimeEngineTrait for RedisRealtimeEngine {
                 Some(awareness_service.clone()),
             ));
 
-            while let Some(frame) = stream.next().await {
+            while let Some(frame) = guarded_stream.next().await {
                 match frame {
                     Ok(bytes) => match analyse_frame(&bytes) {
                         Ok(summary) => {
                             if summary.has_update {
-                                if !can_edit {
+                                let allow_edit = can_edit && edit_flag.load(Ordering::Relaxed);
+                                if !allow_edit {
                                     tracing::warn!(
                                         document_id = %doc_id,
                                         "ignored_update_from_readonly_client"
@@ -416,30 +436,12 @@ impl RealtimeEngineTrait for RedisRealtimeEngine {
         self.bus.publish_update(doc_id, frame).await?;
         Ok(())
     }
-}
 
-fn analyse_frame(frame: &[u8]) -> anyhow::Result<FrameSummary> {
-    let mut decoder = DecoderV1::new(Cursor::new(frame));
-    let mut reader = MessageReader::new(&mut decoder);
-    let mut summary = FrameSummary::default();
-    while let Some(message) = reader.next() {
-        match message? {
-            Message::Sync(SyncMessage::Update(_)) | Message::Sync(SyncMessage::SyncStep2(_)) => {
-                summary.has_update = true;
-            }
-            Message::Awareness(_) => {
-                summary.has_awareness = true;
-            }
-            _ => {}
-        }
+    async fn set_document_editable(&self, doc_id: &str, editable: bool) -> anyhow::Result<()> {
+        let flag = self.ensure_edit_flag(doc_id).await;
+        flag.store(editable, Ordering::SeqCst);
+        Ok(())
     }
-    Ok(summary)
-}
-
-#[derive(Default)]
-struct FrameSummary {
-    has_update: bool,
-    has_awareness: bool,
 }
 
 fn spawn_persistence_worker(
@@ -619,11 +621,18 @@ impl RedisRealtimeEngine {
     async fn send_protocol_start(
         sink: DynRealtimeSink,
         awareness: Arc<Awareness>,
+        writable: bool,
     ) -> anyhow::Result<()> {
         let mut encoder = EncoderV1::new();
-        DefaultProtocol
-            .start::<EncoderV1>(awareness.as_ref(), &mut encoder)
-            .map_err(|err| anyhow!(err))?;
+        if writable {
+            DefaultProtocol
+                .start::<EncoderV1>(awareness.as_ref(), &mut encoder)
+                .map_err(|err| anyhow!(err))?;
+        } else {
+            ReadOnlyProtocol
+                .start::<EncoderV1>(awareness.as_ref(), &mut encoder)
+                .map_err(|err| anyhow!(err))?;
+        }
         let frame = encoder.to_vec();
         if frame.is_empty() {
             return Ok(());
@@ -631,5 +640,26 @@ impl RedisRealtimeEngine {
         let mut guard = sink.lock().await;
         guard.send(frame).await.map_err(|err| anyhow!(err))?;
         Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ReadOnlyProtocol;
+
+impl yrs::sync::Protocol for ReadOnlyProtocol {
+    fn handle_sync_step2(
+        &self,
+        _awareness: &yrs::sync::Awareness,
+        _update: yrs::Update,
+    ) -> Result<Option<yrs::sync::Message>, yrs::sync::Error> {
+        Ok(None)
+    }
+
+    fn handle_update(
+        &self,
+        _awareness: &yrs::sync::Awareness,
+        _update: yrs::Update,
+    ) -> Result<Option<yrs::sync::Message>, yrs::sync::Error> {
+        Ok(None)
     }
 }

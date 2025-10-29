@@ -6,6 +6,7 @@ mod hub;
 mod local_engine;
 mod noop_ports;
 mod redis;
+mod utils;
 pub use doc_persistence::SqlxDocPersistenceAdapter;
 pub use doc_state_reader::SqlxDocStateReader;
 pub use hub::*;

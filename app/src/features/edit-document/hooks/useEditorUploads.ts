@@ -4,10 +4,13 @@ import { toast } from 'sonner'
 
 import { useEditorContext } from '@/features/edit-document/model/editor-context'
 
-export function useEditorUploads(documentId: string, readOnly?: boolean) {
+export function useEditorUploads(documentId: string, readOnly?: boolean, onReadOnlyAttempt?: () => void) {
   const { editor } = useEditorContext()
   const uploadFiles = useCallback(async (files: File[]) => {
-    if (readOnly) return
+    if (readOnly) {
+      try { onReadOnlyAttempt?.() } catch {}
+      return
+    }
     if (!files?.length) return
     const { uploadAttachment } = await import('@/entities/file')
     for (const f of files) {

@@ -18,6 +18,8 @@ import {
   Code,
   Image as ImageIcon,
   FileSpreadsheet,
+  Archive,
+  ArchiveRestore,
 } from 'lucide-react'
 import * as LucideIcons from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -33,6 +35,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Input } from '@/shared/ui/input'
 import { SidebarMenuItem, SidebarMenuButton } from '@/shared/ui/sidebar'
 
+import { useArchiveDocument, useUnarchiveDocument } from '@/entities/document'
 import { GitService } from '@/entities/git'
 import { getPluginKv } from '@/entities/plugin'
 
@@ -78,7 +81,15 @@ export const FileNode = memo(function FileNode({
   onDragOver,
   pluginRules,
 }: FileNodeProps) {
-  const { sharedDocIds, publicDocIds, underSharedFolderDocIds, renameTarget, clearRenameTarget } = useFileTree()
+  const {
+    sharedDocIds,
+    publicDocIds,
+    underSharedFolderDocIds,
+    renameTarget,
+    clearRenameTarget,
+    refreshDocuments,
+    setArchivesExpanded,
+  } = useFileTree()
   const { openSecondaryViewer } = useSecondaryViewer()
   const rowRef = useRef<HTMLDivElement | null>(null)
   const isRowInView = useInView(rowRef, { rootMargin: '160px' })
@@ -87,6 +98,9 @@ export const FileNode = memo(function FileNode({
   const [editingTitle, setEditingTitle] = useState(node.title)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const menuGuardRef = useRef<{ block: boolean; timer?: number }>({ block: false })
+  const isArchived = Boolean(node.archived)
+  const archiveMutation = useArchiveDocument()
+  const unarchiveMutation = useUnarchiveDocument()
 
   const handleMenuOpenChange = useCallback((open: boolean) => {
     if (open) {
@@ -120,29 +134,59 @@ export const FileNode = memo(function FileNode({
   }, [])
 
   const handleStartRename = useCallback(() => {
+    if (isArchived) return
     setIsEditing(true)
     setEditingTitle(node.title)
-  }, [node.title])
+  }, [node.title, isArchived])
   const handleCancelRename = useCallback(() => {
     setIsEditing(false)
     setEditingTitle('')
     clearRenameTarget()
   }, [clearRenameTarget])
   const handleSaveRename = useCallback(() => {
+    if (isArchived) return
     if (editingTitle.trim()) onRename(node.id, editingTitle.trim())
     setIsEditing(false)
     clearRenameTarget()
-  }, [editingTitle, node.id, onRename, clearRenameTarget])
+  }, [editingTitle, node.id, onRename, clearRenameTarget, isArchived])
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => { if (e.key === 'Enter') handleSaveRename(); else if (e.key === 'Escape') handleCancelRename() }, [handleSaveRename, handleCancelRename])
   const handleDelete = useCallback(() => { onDelete(node.id); setShowDeleteDialog(false) }, [node.id, onDelete])
   const handleSelect = useCallback(() => { onSelect(node.id, node.type) }, [node.id, node.type, onSelect])
+  const handleArchive = useCallback(async () => {
+    try {
+      await archiveMutation.mutateAsync(node.id)
+      refreshDocuments()
+      setArchivesExpanded(true)
+      toast.success('Document archived')
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refmd:document-archive-change', { detail: { id: node.id } }))
+      }
+    } catch (error) {
+      console.error('[file-tree] archive document failed', error)
+      toast.error('Failed to archive document')
+    }
+  }, [archiveMutation, node.id, refreshDocuments, setArchivesExpanded])
+
+  const handleUnarchive = useCallback(async () => {
+    try {
+      await unarchiveMutation.mutateAsync(node.id)
+      refreshDocuments()
+      toast.success('Document unarchived')
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refmd:document-archive-change', { detail: { id: node.id } }))
+      }
+    } catch (error) {
+      console.error('[file-tree] unarchive document failed', error)
+      toast.error('Failed to unarchive document')
+    }
+  }, [node.id, refreshDocuments, unarchiveMutation])
 
   useEffect(() => {
-    if (renameTarget === node.id && !isEditing) {
+    if (renameTarget === node.id && !isEditing && !isArchived) {
       setIsEditing(true)
       setEditingTitle(node.title)
     }
-  }, [renameTarget, node.id, node.title, isEditing])
+  }, [renameTarget, node.id, node.title, isEditing, isArchived])
 
   const kvRules = (pluginRules || []).filter(r => r.identify && r.identify.type === 'kvFlag' && !!r.identify.key)
   const shouldFetchPluginFlags = node.type === 'file' && kvRules.length > 0 && (isRowInView || hasBeenVisible)
@@ -270,21 +314,38 @@ export const FileNode = memo(function FileNode({
         'relative rounded-2xl border border-transparent transition-colors duration-150 ease-out',
         isSelected && 'border-primary/40 shadow-sm',
         !isSelected && 'hover:border-border/30',
-        isDropTarget && 'border-primary/40 bg-primary/10'
+        isDropTarget && 'border-primary/40 bg-primary/10',
+        isArchived && 'border-dashed border-border/40 opacity-80'
       )}
     >
       <div
         ref={rowRef}
-        draggable={!isEditing}
-        onDragStart={(e) => onDragStart(e, node.id)}
-        onDragEnd={onDragEnd}
-        onDragEnter={(e) => onDragEnter(e, node.id, node.type)}
-        onDragLeave={onDragLeave}
+        draggable={!isEditing && !isArchived}
+        onDragStart={(e) => {
+          if (isArchived) return
+          onDragStart(e, node.id)
+        }}
+        onDragEnd={(e) => {
+          if (isArchived) return
+          onDragEnd(e)
+        }}
+        onDragEnter={(e) => {
+          if (isArchived) return
+          onDragEnter(e, node.id, node.type)
+        }}
+        onDragLeave={(e) => {
+          if (isArchived) return
+          onDragLeave(e)
+        }}
         onDrop={(e) => {
+          if (isArchived) return
           e.stopPropagation()
           onDrop(e, node.id, node.type, parentId)
         }}
-        onDragOver={(e) => onDragOver(e, node.id, node.type)}
+        onDragOver={(e) => {
+          if (isArchived) return
+          onDragOver(e, node.id, node.type)
+        }}
         className="relative w-full rounded-2xl"
       >
         {isEditing ? (
@@ -316,7 +377,8 @@ export const FileNode = memo(function FileNode({
                 isDragging && 'opacity-50',
                 isSelected
                   ? 'bg-transparent text-foreground'
-                  : 'text-muted-foreground hover:bg-muted/40 hover:text-foreground'
+                  : 'text-muted-foreground hover:bg-muted/40 hover:text-foreground',
+                isArchived && 'text-muted-foreground/80'
               )}
               onClick={handleSelect}
             >
@@ -330,8 +392,9 @@ export const FileNode = memo(function FileNode({
               </span>
               <div className="flex min-w-0 flex-1 items-center gap-1.5">
                 <span className="min-w-0 truncate" title={node.title}>{node.title}</span>
-                {(publicDocIds.has(node.id) || sharedDocIds.has(node.id) || underSharedFolderDocIds.has(node.id)) && (
+                {(isArchived || publicDocIds.has(node.id) || sharedDocIds.has(node.id) || underSharedFolderDocIds.has(node.id)) && (
                   <span className="inline-flex shrink-0 items-center gap-1 text-muted-foreground">
+                    {isArchived && <Archive className="h-3 w-3" />}
                     {publicDocIds.has(node.id) && <Globe className="h-3 w-3" />}
                     {underSharedFolderDocIds.has(node.id) && <LinkIcon className="h-3 w-3" />}
                     {sharedDocIds.has(node.id) && <Share2 className="h-3 w-3" />}
@@ -365,11 +428,13 @@ export const FileNode = memo(function FileNode({
                 collisionPadding={8}
                 className={overlayMenuClass}
               >
-                <DropdownMenuItem
-                  onSelect={(event) => guardMenuAction(event, handleStartRename)}
-                >
-                  <Edit className="h-4 w-4 mr-2" />Rename
-                </DropdownMenuItem>
+                {!isArchived && (
+                  <DropdownMenuItem
+                    onSelect={(event) => guardMenuAction(event, handleStartRename)}
+                  >
+                    <Edit className="h-4 w-4 mr-2" />Rename
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem
                   onSelect={(event) => guardMenuAction(event, () => openSecondaryViewer(node.id, 'document'))}
                 >
@@ -388,6 +453,22 @@ export const FileNode = memo(function FileNode({
                 >
                   <Ban className="h-4 w-4 mr-2" />Ignore in Git
                 </DropdownMenuItem>
+                {!isArchived && (
+                  <DropdownMenuItem
+                    onSelect={(event) => guardMenuAction(event, handleArchive)}
+                    disabled={archiveMutation.isPending}
+                  >
+                    <Archive className="h-4 w-4 mr-2" />Archive
+                  </DropdownMenuItem>
+                )}
+                {isArchived && (
+                  <DropdownMenuItem
+                    onSelect={(event) => guardMenuAction(event, handleUnarchive)}
+                    disabled={unarchiveMutation.isPending}
+                  >
+                    <ArchiveRestore className="h-4 w-4 mr-2" />Unarchive
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   onSelect={(event) => guardMenuAction(event, () => setShowDeleteDialog(true))}

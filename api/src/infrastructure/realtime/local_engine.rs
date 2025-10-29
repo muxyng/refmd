@@ -29,4 +29,8 @@ impl RealtimeEngine for LocalRealtimeEngine {
     async fn apply_snapshot(&self, doc_id: &str, doc: &Doc) -> anyhow::Result<()> {
         self.hub.apply_snapshot(doc_id, doc).await
     }
+
+    async fn set_document_editable(&self, doc_id: &str, editable: bool) -> anyhow::Result<()> {
+        self.hub.set_document_editable(doc_id, editable).await
+    }
 }
