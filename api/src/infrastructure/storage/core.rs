@@ -25,39 +25,72 @@ pub async fn build_doc_dir(
     uploads_root: &Path,
     doc_id: Uuid,
 ) -> anyhow::Result<PathBuf> {
-    // Fetch document chain to root
-    let mut dir = uploads_root.to_path_buf();
-    // owner_id
-    let row = sqlx::query("SELECT owner_id, parent_id FROM documents WHERE id = $1")
-        .bind(doc_id)
-        .fetch_optional(pool)
-        .await?;
+    // Fetch basic document info first
+    let row = sqlx::query(
+        "SELECT owner_id, parent_id, archived_at, archived_parent_id FROM documents WHERE id = $1",
+    )
+    .bind(doc_id)
+    .fetch_optional(pool)
+    .await?;
     let row = row.ok_or_else(|| anyhow::anyhow!("Document not found"))?;
+
     let owner_id: Uuid = row.get("owner_id");
-    let mut parent_id: Option<Uuid> = row.try_get("parent_id").ok();
+    let archived_at: Option<chrono::DateTime<chrono::Utc>> = row
+        .try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("archived_at")
+        .ok()
+        .flatten();
+    let mut dir = uploads_root.to_path_buf();
     dir.push(owner_id.to_string());
 
-    let mut comps: Vec<String> = Vec::new();
-    while let Some(pid) = parent_id {
-        if let Some(r) = sqlx::query("SELECT title, parent_id, type FROM documents WHERE id = $1")
-            .bind(pid)
-            .fetch_optional(pool)
-            .await?
-        {
-            let t: String = r.get("type");
-            if t == "folder" {
-                let title: String = r.get("title");
-                comps.push(sanitize_title(&title));
-            }
-            parent_id = r.try_get("parent_id").ok();
-        } else {
-            break;
+    let mut current_parent: Option<Uuid> = if archived_at.is_some() {
+        dir.push("Archives");
+        row.try_get::<Option<Uuid>, _>("archived_parent_id")
+            .ok()
+            .flatten()
+    } else {
+        row.try_get::<Option<Uuid>, _>("parent_id").ok().flatten()
+    };
+
+    let mut components: Vec<String> = Vec::new();
+    while let Some(pid) = current_parent {
+        let parent = sqlx::query(
+            "SELECT title, type, parent_id, archived_at, archived_parent_id FROM documents WHERE id = $1",
+        )
+        .bind(pid)
+        .fetch_optional(pool)
+        .await?;
+        let parent = match parent {
+            Some(row) => row,
+            None => break,
+        };
+
+        let dtype: String = parent.get("type");
+        if dtype == "folder" {
+            let title: String = parent.get("title");
+            components.push(sanitize_title(&title));
         }
+        let parent_archived: Option<chrono::DateTime<chrono::Utc>> = parent
+            .try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("archived_at")
+            .ok()
+            .flatten();
+        current_parent = if parent_archived.is_some() {
+            parent
+                .try_get::<Option<Uuid>, _>("archived_parent_id")
+                .ok()
+                .flatten()
+        } else {
+            parent
+                .try_get::<Option<Uuid>, _>("parent_id")
+                .ok()
+                .flatten()
+        };
     }
-    comps.reverse();
-    for c in comps {
-        dir.push(c);
+
+    components.reverse();
+    for component in components {
+        dir.push(component);
     }
+
     Ok(dir)
 }
 
