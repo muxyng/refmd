@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use tokio::task;
 use uuid::Uuid;
 
 use crate::application::ports::document_repository::DocumentRepository;
@@ -9,14 +12,13 @@ use crate::application::ports::plugin_repository::PluginRepository;
 use crate::application::ports::storage_port::StoragePort;
 use crate::application::ports::user_repository::UserRepository;
 
-pub struct DeleteAccount<'a, UR, DR, SP, PIR, PR, PAS, GR, GW>
+pub struct DeleteAccount<'a, UR, DR, SP, PIR, PR, GR, GW>
 where
     UR: UserRepository + ?Sized,
     DR: DocumentRepository + ?Sized,
     SP: StoragePort + ?Sized,
     PIR: PluginInstallationRepository + ?Sized,
     PR: PluginRepository + ?Sized,
-    PAS: PluginAssetStore + ?Sized,
     GR: GitRepository + ?Sized,
     GW: GitWorkspacePort + ?Sized,
 {
@@ -25,19 +27,18 @@ where
     pub storage: &'a SP,
     pub plugin_installations: &'a PIR,
     pub plugin_repo: &'a PR,
-    pub plugin_assets: &'a PAS,
+    pub plugin_assets: Arc<dyn PluginAssetStore>,
     pub git_repo: &'a GR,
     pub git_workspace: &'a GW,
 }
 
-impl<'a, UR, DR, SP, PIR, PR, PAS, GR, GW> DeleteAccount<'a, UR, DR, SP, PIR, PR, PAS, GR, GW>
+impl<'a, UR, DR, SP, PIR, PR, GR, GW> DeleteAccount<'a, UR, DR, SP, PIR, PR, GR, GW>
 where
     UR: UserRepository + ?Sized,
     DR: DocumentRepository + ?Sized,
     SP: StoragePort + ?Sized,
     PIR: PluginInstallationRepository + ?Sized,
     PR: PluginRepository + ?Sized,
-    PAS: PluginAssetStore + ?Sized,
     GR: GitRepository + ?Sized,
     GW: GitWorkspacePort + ?Sized,
 {
@@ -46,11 +47,19 @@ where
 
         let installations = self.plugin_installations.list_for_user(user_id).await?;
         for inst in &installations {
-            if let Err(err) = self
-                .plugin_assets
-                .remove_user_plugin_dir(&user_id, &inst.plugin_id)
+            let plugin_id = inst.plugin_id.clone();
+            let plugin_for_log = plugin_id.clone();
+            let assets = Arc::clone(&self.plugin_assets);
+            match task::spawn_blocking(move || assets.remove_user_plugin_dir(&user_id, &plugin_id))
+                .await
             {
-                tracing::warn!(user_id = %user_id, plugin_id = %inst.plugin_id, error = ?err, "failed to remove plugin assets for user");
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => {
+                    tracing::warn!(user_id = %user_id, plugin_id = %plugin_for_log, error = ?err, "failed to remove plugin assets for user");
+                }
+                Err(err) => {
+                    tracing::warn!(user_id = %user_id, plugin_id = %plugin_for_log, error = ?err, "failed to join plugin asset removal task");
+                }
             }
         }
         self.plugin_installations

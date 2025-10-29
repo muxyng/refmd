@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use crate::application::access;
 use crate::application::services::markdown::{PlaceholderItem, RenderOptions, RenderResponse};
+use crate::application::services::plugins::asset_signer::AssetScope;
 use crate::bootstrap::app_context::AppContext;
 use crate::presentation::http::auth::{self, Bearer};
 use axum::{Json, Router, extract::State, http::StatusCode, routing::post};
@@ -293,23 +294,13 @@ impl RendererScope {
             RendererScope::User { .. } => "user",
         }
     }
-
-    fn asset_prefix(&self, plugin_id: &str, version: &str) -> String {
-        match self {
-            RendererScope::Global => {
-                format!("/api/plugin-assets/global/{}/{}", plugin_id, version)
-            }
-            RendererScope::User { user_id } => {
-                format!("/api/plugin-assets/{}/{}/{}", user_id, plugin_id, version)
-            }
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
 struct HydrateSpec {
     module: String,
     export: Option<String>,
+    #[allow(dead_code)]
     etag: Option<String>,
 }
 
@@ -358,7 +349,15 @@ async fn apply_placeholder_renderers(
 
             let Some(function) = spec.function.as_deref() else {
                 if let Some(hydrate) = hydrate {
-                    if attach_hydrate_metadata(&mut html, &placeholder, &request, spec, hydrate) {
+                    if attach_hydrate_metadata(
+                        ctx,
+                        &mut html,
+                        &placeholder,
+                        &request,
+                        spec,
+                        hydrate,
+                        options.token.as_deref(),
+                    ) {
                         handled = true;
                         break;
                     }
@@ -391,10 +390,12 @@ async fn apply_placeholder_renderers(
                         if let Some(fragment) = resp.html {
                             let fragment = if let Some(hydrate) = hydrate {
                                 match build_hydrated_fragment(
+                                    ctx,
                                     &placeholder,
                                     &request,
                                     spec,
                                     hydrate,
+                                    options.token.as_deref(),
                                     &fragment,
                                 ) {
                                     Ok(wrapped) => wrapped,
@@ -573,13 +574,15 @@ fn push_renderers_from_manifest(
 }
 
 fn build_hydrated_fragment(
+    ctx: &AppContext,
     placeholder: &PlaceholderItem,
     request: &serde_json::Value,
     spec: &RendererSpec,
     hydrate: &HydrateSpec,
+    token: Option<&str>,
     fragment: &str,
 ) -> Result<String, serde_json::Error> {
-    let attrs = build_hydrate_attr_string(request, spec, hydrate)?;
+    let attrs = build_hydrate_attr_string(ctx, request, spec, hydrate, token)?;
     Ok(format!(
         "<div data-refmd-placeholder=\"true\" data-placeholder-id=\"{}\" data-placeholder-kind=\"{}\"{}>{}</div>",
         htmlescape::encode_minimal(&placeholder.id),
@@ -693,13 +696,15 @@ fn replace_placeholder_markup(target: &mut String, id: &str, replacement: &str) 
 }
 
 fn attach_hydrate_metadata(
+    ctx: &AppContext,
     target: &mut String,
     placeholder: &PlaceholderItem,
     request: &serde_json::Value,
     spec: &RendererSpec,
     hydrate: &HydrateSpec,
+    token: Option<&str>,
 ) -> bool {
-    let attrs = match build_hydrate_attr_string(request, spec, hydrate) {
+    let attrs = match build_hydrate_attr_string(ctx, request, spec, hydrate, token) {
         Ok(value) => value,
         Err(err) => {
             warn!(
@@ -716,33 +721,38 @@ fn attach_hydrate_metadata(
     insert_placeholder_attributes(target, &placeholder.id, &attrs)
 }
 
-fn build_hydrate_module_url(spec: &RendererSpec, hydrate: &HydrateSpec) -> String {
-    let base = spec
-        .scope
-        .asset_prefix(&spec.plugin_id, &spec.plugin_version);
-    let module_path = hydrate.module.trim_start_matches('/');
-    let mut url = format!("{}/{}", base.trim_end_matches('/'), module_path);
-    if let Some(etag) = &hydrate.etag {
-        if !etag.is_empty() {
-            let encoded = urlencoding::encode(etag);
-            if url.contains('?') {
-                url.push_str("&v=");
-                url.push_str(&encoded);
-            } else {
-                url.push_str("?v=");
-                url.push_str(&encoded);
-            }
-        }
-    }
-    url
+fn build_hydrate_module_url(
+    ctx: &AppContext,
+    spec: &RendererSpec,
+    hydrate: &HydrateSpec,
+    token: Option<&str>,
+) -> Option<String> {
+    let module = hydrate.module.as_str();
+    let ttl = ctx.cfg.plugin_asset_url_ttl_secs;
+    let signer = ctx.asset_signer();
+    let scope = match spec.scope {
+        RendererScope::Global => AssetScope::Global,
+        RendererScope::User { user_id } => AssetScope::User {
+            owner_id: user_id,
+            share_token: token,
+        },
+    };
+    Some(signer.sign_url(scope, &spec.plugin_id, &spec.plugin_version, &module, ttl))
 }
 
 fn build_hydrate_attr_string(
+    ctx: &AppContext,
     request: &serde_json::Value,
     spec: &RendererSpec,
     hydrate: &HydrateSpec,
+    token: Option<&str>,
 ) -> Result<String, serde_json::Error> {
-    let module_url = build_hydrate_module_url(spec, hydrate);
+    let module_url = build_hydrate_module_url(ctx, spec, hydrate, token).ok_or_else(|| {
+        serde_json::Error::io(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "invalid hydrate module path",
+        ))
+    })?;
     let export_name = hydrate.export.as_deref().unwrap_or("default");
     let context = json!({
         "request": request,

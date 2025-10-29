@@ -52,6 +52,8 @@ pub struct Config {
     pub plugin_timeout_secs: u64,
     pub plugin_memory_max_mb: u64,
     pub plugin_fuel_limit: Option<u64>,
+    pub plugin_asset_sign_key: String,
+    pub plugin_asset_url_ttl_secs: u64,
     pub encryption_key: String,
     pub upload_max_bytes: usize,
     pub public_base_url: Option<String>,
@@ -118,6 +120,11 @@ impl Config {
                 trimmed.parse().ok()
             }
         });
+        let plugin_asset_sign_key = env_var(&["PLUGIN_ASSET_SIGN_KEY"])
+            .unwrap_or_else(|| "development-plugin-sign-key".into());
+        let plugin_asset_url_ttl_secs = env_var(&["PLUGIN_ASSET_URL_TTL_SECS"])
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(120);
         let encryption_key = env_var(&["ENCRYPTION_KEY"]).unwrap_or_else(|| jwt_secret_pem.clone());
         let upload_max_bytes = env_var(&["UPLOAD_MAX_BYTES"])
             .and_then(|s| s.parse().ok())
@@ -177,6 +184,11 @@ impl Config {
             if encryption_key == "development-secret-change-me" || encryption_key.len() < 16 {
                 anyhow::bail!("ENCRYPTION_KEY must be set to a strong secret in production");
             }
+            if plugin_asset_sign_key == "development-plugin-sign-key"
+                || plugin_asset_sign_key.len() < 16
+            {
+                anyhow::bail!("PLUGIN_ASSET_SIGN_KEY must be set to a strong secret in production");
+            }
             if matches!(storage_backend, StorageBackend::S3) {
                 if s3_bucket.as_deref().unwrap_or("").is_empty() {
                     anyhow::bail!(
@@ -218,6 +230,8 @@ impl Config {
             plugin_timeout_secs,
             plugin_memory_max_mb,
             plugin_fuel_limit,
+            plugin_asset_sign_key,
+            plugin_asset_url_ttl_secs,
             encryption_key,
             upload_max_bytes,
             public_base_url,

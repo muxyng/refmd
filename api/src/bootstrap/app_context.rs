@@ -23,6 +23,7 @@ use crate::application::ports::shares_repository::SharesRepository;
 use crate::application::ports::storage_port::StoragePort;
 use crate::application::ports::tag_repository::TagRepository;
 use crate::application::ports::user_repository::UserRepository;
+use crate::application::services::plugins::asset_signer::AssetSigner;
 use crate::application::services::realtime::snapshot::SnapshotService;
 use crate::bootstrap::config::Config;
 use futures_util::stream::BoxStream;
@@ -61,6 +62,7 @@ pub struct AppServices {
     plugin_event_bus: Arc<PgPluginEventBus>,
     plugin_event_publisher: Arc<dyn PluginEventPublisher>,
     plugin_assets: Arc<dyn PluginAssetStore>,
+    asset_signer: Arc<AssetSigner>,
 }
 
 impl AppServices {
@@ -90,6 +92,7 @@ impl AppServices {
         plugin_event_bus: Arc<PgPluginEventBus>,
         plugin_event_publisher: Arc<dyn PluginEventPublisher>,
         plugin_assets: Arc<dyn PluginAssetStore>,
+        asset_signer: Arc<AssetSigner>,
     ) -> Self {
         Self {
             document_repo,
@@ -116,6 +119,7 @@ impl AppServices {
             plugin_event_bus,
             plugin_event_publisher,
             plugin_assets,
+            asset_signer,
         }
     }
 }
@@ -222,6 +226,10 @@ impl AppContext {
 
     pub fn plugin_assets(&self) -> Arc<dyn PluginAssetStore> {
         self.services.plugin_assets.clone()
+    }
+
+    pub fn asset_signer(&self) -> Arc<AssetSigner> {
+        self.services.asset_signer.clone()
     }
 
     pub async fn subscribe_plugin_events(

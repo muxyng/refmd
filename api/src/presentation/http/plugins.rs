@@ -3,20 +3,24 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, HeaderValue, StatusCode, header},
+    response::{IntoResponse, Response},
     routing::{get, patch, post},
 };
 use futures_util::stream::{self, Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::fs;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::application::access;
 use crate::application::dto::plugins::ExecResult;
+use crate::application::services::plugins::asset_signer::AssetScope;
 use crate::application::use_cases::plugins::exec_action::ExecutePluginAction;
 use crate::application::use_cases::plugins::install_from_url::{
     InstallPluginError, InstallPluginFromUrl,
@@ -54,6 +58,7 @@ pub fn routes(ctx: AppContext) -> Router {
             "/plugins/:plugin/docs/:doc_id/kv/:key",
             get(get_kv_value).put(put_kv_value),
         )
+        .route("/plugin-assets", get(get_plugin_asset))
         .with_state(ctx)
 }
 
@@ -503,13 +508,16 @@ pub struct ManifestItem {
     repository: Option<String>,
 }
 
-fn manifest_item_from_json(
+fn manifest_item_from_json<F>(
     id: &str,
     version: &str,
     manifest: &serde_json::Value,
-    entry_prefix: &str,
     scope: &str,
-) -> Option<ManifestItem> {
+    sign_entry: F,
+) -> Option<ManifestItem>
+where
+    F: Fn(&str) -> Option<String>,
+{
     let name = manifest
         .get("name")
         .and_then(|x| x.as_str())
@@ -566,10 +574,14 @@ fn manifest_item_from_json(
         scope: scope.to_string(),
         mounts,
         frontend: match frontend_entry {
-            Some(entry) => json!({
-                "entry": format!("{}/{}", entry_prefix.trim_end_matches('/'), entry),
-                "mode": frontend_mode.unwrap_or_else(|| "esm".to_string()),
-            }),
+            Some(entry) => {
+                let normalized = normalize_manifest_path(&entry)?;
+                let signed = sign_entry(&normalized)?;
+                json!({
+                    "entry": signed,
+                    "mode": frontend_mode.unwrap_or_else(|| "esm".to_string()),
+                })
+            }
             None => serde_json::Value::Null,
         },
         permissions: perms,
@@ -593,6 +605,40 @@ fn ensure_valid_plugin_id(id: &str) -> Result<(), StatusCode> {
     } else {
         Err(StatusCode::BAD_REQUEST)
     }
+}
+
+fn ensure_valid_plugin_version(version: &str) -> Result<(), StatusCode> {
+    const MAX_LEN: usize = 128;
+    if version.is_empty() || version.len() > MAX_LEN {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if version
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    {
+        Ok(())
+    } else {
+        Err(StatusCode::BAD_REQUEST)
+    }
+}
+
+fn is_safe_asset_segment(segment: &str) -> bool {
+    !(segment.is_empty()
+        || segment == "."
+        || segment == ".."
+        || segment.contains(['/', '\\', '\0']))
+}
+
+fn normalize_manifest_path(raw: &str) -> Option<String> {
+    let mut trimmed = raw.trim();
+    while let Some(stripped) = trimmed.strip_prefix("./") {
+        trimmed = stripped;
+    }
+    trimmed = trimmed.trim_start_matches('/');
+    if trimmed.is_empty() || trimmed.contains("..") || trimmed.contains('\\') {
+        return None;
+    }
+    Some(trimmed.to_string())
 }
 
 async fn resolve_plugin_owner_id(
@@ -644,14 +690,24 @@ pub async fn get_manifest(
     bearer: Option<Bearer>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<Vec<ManifestItem>>, StatusCode> {
-    let token = params.get("token").map(|s| s.as_str());
-    let actor =
-        auth::resolve_actor_from_parts(&ctx.cfg, bearer, token).ok_or(StatusCode::UNAUTHORIZED)?;
+    let raw_token = params
+        .get("token")
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let token_hint = raw_token.as_deref();
+    let actor = auth::resolve_actor_from_parts(&ctx.cfg, bearer, token_hint)
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+    let asset_token = match actor {
+        access::Actor::ShareToken(_) => token_hint,
+        _ => None,
+    };
 
     let store = ctx.plugin_assets();
+    let asset_signer = ctx.asset_signer();
+    let ttl = ctx.cfg.plugin_asset_url_ttl_secs;
     let mut items: Vec<ManifestItem> = Vec::new();
 
-    let user_scope_owner = resolve_plugin_owner_id(&ctx, &actor, token)
+    let user_scope_owner = resolve_plugin_owner_id(&ctx, &actor, token_hint)
         .await
         .map_err(|err| {
             tracing::warn!(error = ?err, "share_owner_lookup_failed");
@@ -663,13 +719,14 @@ pub async fn get_manifest(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     for (id_name, ver, json) in global_plugins {
-        if let Some(item) = manifest_item_from_json(
-            &id_name,
-            &ver,
-            &json,
-            &format!("/api/plugin-assets/global/{}/{}", id_name, ver),
-            "global",
-        ) {
+        let signer = asset_signer.clone();
+        let plugin_id = id_name.clone();
+        let version = ver.clone();
+        let sign_entry = move |relative: &str| -> Option<String> {
+            Some(signer.sign_url(AssetScope::Global, &plugin_id, &version, relative, ttl))
+        };
+
+        if let Some(item) = manifest_item_from_json(&id_name, &ver, &json, "global", sign_entry) {
             items.push(item);
         }
     }
@@ -686,15 +743,29 @@ pub async fn get_manifest(
                 .await
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
             {
+                let signer = asset_signer.clone();
+                let plugin_id = inst.plugin_id.clone();
+                let version = inst.version.clone();
+                let share = asset_token.map(|s| s.to_string());
+                let sign_entry = move |relative: &str| -> Option<String> {
+                    Some(signer.sign_url(
+                        AssetScope::User {
+                            owner_id: user_id,
+                            share_token: share.as_deref(),
+                        },
+                        &plugin_id,
+                        &version,
+                        relative,
+                        ttl,
+                    ))
+                };
+
                 if let Some(item) = manifest_item_from_json(
                     &inst.plugin_id,
                     &inst.version,
                     &json,
-                    &format!(
-                        "/api/plugin-assets/{}/{}/{}",
-                        user_id, inst.plugin_id, inst.version
-                    ),
                     "user",
+                    sign_entry,
                 ) {
                     items.push(item);
                 }
@@ -961,4 +1032,127 @@ async fn ensure_plugin_permission(
     } else {
         Err(StatusCode::FORBIDDEN)
     }
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/plugin-assets",
+    params(("token" = Option<String>, Query, description = "Share token (optional)")),
+    responses((status = 200, description = "Plugin asset")),
+    tag = "Plugins",
+    operation_id = "pluginsGetAsset"
+)]
+pub async fn get_plugin_asset(
+    State(ctx): State<AppContext>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Response, StatusCode> {
+    let scope_raw = params
+        .get("scope")
+        .map(|s| s.as_str())
+        .ok_or(StatusCode::BAD_REQUEST)?;
+    let plugin_id = params
+        .get("plugin")
+        .map(|s| s.as_str())
+        .ok_or(StatusCode::BAD_REQUEST)?;
+    ensure_valid_plugin_id(plugin_id)?;
+    let version = params
+        .get("version")
+        .map(|s| s.as_str())
+        .ok_or(StatusCode::BAD_REQUEST)?;
+    ensure_valid_plugin_version(version)?;
+    let path = params
+        .get("path")
+        .map(|s| s.as_str())
+        .ok_or(StatusCode::BAD_REQUEST)?;
+    let normalized_path = normalize_manifest_path(path).ok_or(StatusCode::BAD_REQUEST)?;
+    let exp = params
+        .get("exp")
+        .map(|s| s.as_str())
+        .ok_or(StatusCode::BAD_REQUEST)?;
+    let exp_i64 = exp.parse::<i64>().map_err(|_| StatusCode::BAD_REQUEST)?;
+    let sig = params
+        .get("sig")
+        .map(|s| s.as_str())
+        .ok_or(StatusCode::BAD_REQUEST)?;
+    let share_owned = params.get("share").map(|s| s.to_string());
+
+    let signer = ctx.asset_signer();
+    let store = ctx.plugin_assets();
+
+    let mut owner_opt: Option<Uuid> = None;
+    let scope = match scope_raw {
+        "global" => AssetScope::Global,
+        "user" => {
+            let owner_str = params
+                .get("owner")
+                .map(|s| s.as_str())
+                .ok_or(StatusCode::BAD_REQUEST)?;
+            let owner_id = Uuid::parse_str(owner_str).map_err(|_| StatusCode::BAD_REQUEST)?;
+            owner_opt = Some(owner_id);
+            AssetScope::User {
+                owner_id,
+                share_token: share_owned.as_deref(),
+            }
+        }
+        _ => return Err(StatusCode::BAD_REQUEST),
+    };
+
+    if !signer.verify_url(scope, plugin_id, version, &normalized_path, exp_i64, sig) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    let mut relative = PathBuf::new();
+    for segment in normalized_path.split('/') {
+        if !is_safe_asset_segment(segment) {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        relative.push(segment);
+    }
+    if relative.as_os_str().is_empty() {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    let base_dir = match owner_opt {
+        None => {
+            let mut base = store.global_root();
+            base.push(plugin_id);
+            base.push(version);
+            base
+        }
+        Some(owner_id) => {
+            let mut base = store.user_root(&owner_id);
+            base.push(plugin_id);
+            base.push(version);
+            base
+        }
+    };
+
+    let full_path = base_dir.join(&relative);
+    if !full_path.starts_with(&base_dir) {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    let data = fs::read(&full_path)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+
+    let content_type = mime_guess::from_path(&full_path)
+        .first_raw()
+        .unwrap_or("application/octet-stream");
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_str(content_type)
+            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
+    );
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=60"),
+    );
+    headers.insert(
+        header::HeaderName::from_static("x-content-type-options"),
+        HeaderValue::from_static("nosniff"),
+    );
+
+    Ok((headers, data).into_response())
 }

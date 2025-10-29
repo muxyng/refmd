@@ -190,7 +190,7 @@ pub async fn delete_account(
         storage: storage.as_ref(),
         plugin_installations: plugin_installations.as_ref(),
         plugin_repo: plugin_repo.as_ref(),
-        plugin_assets: plugin_assets.as_ref(),
+        plugin_assets,
         git_repo: git_repo.as_ref(),
         git_workspace: git_workspace.as_ref(),
     };

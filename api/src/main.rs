@@ -9,7 +9,6 @@ use http::HeaderValue;
 use tokio::task::JoinHandle;
 use tokio::time::{Duration, sleep};
 use tower_http::cors::{AllowOrigin, CorsLayer};
-use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 use tracing::{error, info};
 
@@ -18,6 +17,7 @@ use api::application::ports::plugin_event_publisher::PluginEventPublisher;
 use api::application::ports::plugin_installation_repository::PluginInstallationRepository;
 use api::application::ports::plugin_installer::PluginInstaller;
 use api::application::ports::plugin_runtime::PluginRuntime;
+use api::application::services::plugins::asset_signer::AssetSigner;
 use api::bootstrap::app_context::{AppContext, AppServices};
 use api::bootstrap::config::{Config, StorageBackend};
 use api::infrastructure::db::advisory_lock::AdvisoryLock;
@@ -189,6 +189,8 @@ async fn main() -> anyhow::Result<()> {
     // Database
     let pool = api::infrastructure::db::connect_pool(&cfg.database_url).await?;
     api::infrastructure::db::migrate(&pool).await?;
+
+    let asset_signer = Arc::new(AssetSigner::new(&cfg.plugin_asset_sign_key));
 
     let storage_port: Arc<dyn api::application::ports::storage_port::StoragePort> =
         match cfg.storage_backend {
@@ -422,6 +424,7 @@ async fn main() -> anyhow::Result<()> {
         plugin_event_bus.clone(),
         plugin_event_publisher,
         plugin_assets.clone(),
+        asset_signer.clone(),
     );
 
     let ctx = AppContext::new(cfg.clone(), services);
@@ -499,18 +502,6 @@ async fn main() -> anyhow::Result<()> {
         .route("/*path", get(api::presentation::http::files::serve_upload))
         .with_state(ctx.clone());
 
-    let plugin_root = {
-        let candidates = [
-            std::path::PathBuf::from("./plugins"),
-            std::path::PathBuf::from("../plugins"),
-        ];
-        candidates
-            .iter()
-            .find(|p| p.exists())
-            .cloned()
-            .unwrap_or_else(|| std::path::PathBuf::from("./plugins"))
-    };
-
     // Build API router
     let api_router = Router::new()
         .nest(
@@ -541,7 +532,6 @@ async fn main() -> anyhow::Result<()> {
             "/api/public",
             api::presentation::http::public::routes(ctx.clone()),
         )
-        .nest_service("/api/plugin-assets", ServeDir::new(plugin_root))
         .merge(SwaggerUi::new("/api/docs").url("/api/openapi.json", ApiDoc::openapi()))
         .layer(cors)
         // Global body size limit for uploads (configurable)
