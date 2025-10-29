@@ -1,7 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { DocumentsService } from '@/shared/api'
-import type { DocumentListResponse, Document as ApiDocument, BacklinksResponse, OutgoingLinksResponse } from '@/shared/api'
+import type {
+  DocumentListResponse,
+  Document as ApiDocument,
+  BacklinksResponse,
+  OutgoingLinksResponse,
+  SnapshotListResponse,
+  SnapshotDiffBaseParam,
+  SnapshotDiffResponse,
+  SnapshotRestoreResponse,
+  SnapshotSummary,
+} from '@/shared/api'
 
 export const documentKeys = {
   all: ['documents'] as const,
@@ -9,6 +19,13 @@ export const documentKeys = {
   byId: (id: string) => ['documents', id] as const,
   backlinks: (id: string) => ['documents', id, 'backlinks'] as const,
   links: (id: string) => ['documents', id, 'links'] as const,
+  snapshots: (id: string) => ['documents', id, 'snapshots'] as const,
+  snapshotDiff: (
+    id: string,
+    snapshotId: string,
+    compare?: string | null,
+    base?: SnapshotDiffBaseParam | 'auto'
+  ) => ['documents', id, 'snapshot', snapshotId, compare ?? 'current', base ?? 'auto'] as const,
 }
 
 export const listDocumentsQuery = (params?: { query?: string; tag?: string }) => ({
@@ -34,6 +51,83 @@ export function useBacklinks(id: string) {
 
 export function useOutgoingLinks(id: string) {
   return useQuery(outgoingLinksQuery(id))
+}
+
+export const documentSnapshotsQuery = (id: string, params?: { token?: string | null }) => ({
+  queryKey: documentKeys.snapshots(id),
+  queryFn: () =>
+    DocumentsService.listDocumentSnapshots({
+      id,
+      token: params?.token ?? null,
+      limit: null,
+      offset: null,
+    }) as Promise<SnapshotListResponse>,
+  enabled: !!id,
+})
+
+export function useDocumentSnapshots(id: string, params?: { token?: string | null }) {
+  return useQuery(documentSnapshotsQuery(id, params))
+}
+
+export const snapshotDiffQuery = (
+  id: string,
+  snapshotId: string,
+  params?: { compare?: string | null; base?: SnapshotDiffBaseParam | 'auto'; token?: string | null },
+) => ({
+  queryKey: documentKeys.snapshotDiff(
+    id,
+    snapshotId,
+    params?.compare ?? undefined,
+    params?.base ?? 'auto'
+  ),
+  queryFn: () =>
+    DocumentsService.getDocumentSnapshotDiff({
+      id,
+      snapshotId,
+      compare: params?.compare ?? null,
+      base: params?.base === 'auto' ? null : params?.base ?? null,
+      token: params?.token ?? null,
+    }) as Promise<SnapshotDiffResponse>,
+})
+
+export async function triggerSnapshotRestore(params: {
+  documentId: string
+  snapshotId: string
+  token?: string | null
+}): Promise<SnapshotSummary> {
+  const response = (await DocumentsService.restoreDocumentSnapshot({
+    id: params.documentId,
+    snapshotId: params.snapshotId,
+    token: params.token ?? null,
+  })) as SnapshotRestoreResponse
+  return response.snapshot
+}
+
+export async function downloadSnapshot(params: {
+  documentId: string
+  snapshotId: string
+  token?: string | null
+  filename?: string
+}) {
+  const blob = (await DocumentsService.downloadDocumentSnapshot({
+    id: params.documentId,
+    snapshotId: params.snapshotId,
+    token: params.token ?? null,
+  })) as Blob
+  const name = params.filename ?? `snapshot-${params.snapshotId}.zip`
+  const url = URL.createObjectURL(blob)
+  try {
+    const link = document.createElement('a')
+    link.href = url
+    link.download = name
+    link.style.display = 'none'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  } finally {
+    URL.revokeObjectURL(url)
+  }
+  return name
 }
 
 export function useCreateDocument() {

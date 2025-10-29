@@ -41,10 +41,10 @@ export class PluginsService {
         token,
     }: {
         /**
-         * Share token
+         * Share token (optional)
          */
         token?: string | null,
-    } = {}): CancelablePromise<Array<ManifestItem>> {
+    }): CancelablePromise<Array<ManifestItem>> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/me/plugins/manifest',

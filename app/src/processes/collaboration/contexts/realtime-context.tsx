@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useMemo, useState } from 'react'
+import React, { createContext, useContext, useMemo, useState, type ReactNode } from 'react'
 
 export type DocumentHeaderAction = {
   id?: string
@@ -6,6 +6,8 @@ export type DocumentHeaderAction = {
   onSelect?: () => void
   disabled?: boolean
   variant?: 'default' | 'primary' | 'outline'
+  icon?: ReactNode
+  tooltip?: string
 }
 
 type RealtimeState = {

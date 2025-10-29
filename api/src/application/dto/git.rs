@@ -76,29 +76,3 @@ pub struct GitSyncOutcome {
     pub pushed: bool,
     pub message: String,
 }
-
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "lowercase")]
-pub enum DiffLineType {
-    Added,
-    Deleted,
-    Context,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct DiffLine {
-    pub line_type: DiffLineType,
-    pub old_line_number: Option<u32>,
-    pub new_line_number: Option<u32>,
-    pub content: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct DiffResult {
-    pub file_path: String,
-    pub diff_lines: Vec<DiffLine>,
-    pub old_content: Option<String>,
-    pub new_content: Option<String>,
-}

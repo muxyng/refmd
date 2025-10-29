@@ -1,11 +1,13 @@
 import { createFileRoute, useNavigate, useParams } from '@tanstack/react-router'
-import { useEffect, useMemo, useState } from 'react'
+import { History } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { fetchDocumentMeta } from '@/entities/document'
 import { buildCanonicalUrl, buildOgImageUrl } from '@/entities/public'
 
 import { documentBeforeLoadGuard, useAuthContext } from '@/features/auth'
 import { BacklinksPanel } from '@/features/document-backlinks'
+import { SnapshotHistoryDialog } from '@/features/document-snapshots'
 import { EditorOverlay, MarkdownEditor, useViewContext } from '@/features/edit-document'
 import { usePluginDocumentRedirect } from '@/features/plugins'
 import { useSecondaryViewer } from '@/features/secondary-viewer'
@@ -137,10 +139,12 @@ function DocumentClient({
 }) {
   const navigate = useNavigate()
   const { user } = useAuthContext()
+  const [showSnapshots, setShowSnapshots] = useState(false)
+  const openSnapshots = useCallback(() => setShowSnapshots(true), [])
   const { secondaryDocumentId, secondaryDocumentType, showSecondaryViewer, closeSecondaryViewer, openSecondaryViewer } = useSecondaryViewer()
   const { showBacklinks, setShowBacklinks } = useViewContext()
   const { status, doc, awareness, isReadOnly, error: realtimeError } = useCollaborativeDocument(id, shareToken)
-  const { documentTitle: realtimeTitle } = useRealtime()
+  const { documentTitle: realtimeTitle, documentActions, setDocumentActions } = useRealtime()
   const redirecting = usePluginDocumentRedirect(id, {
     navigate: (to) => navigate({ to }),
   })
@@ -163,6 +167,31 @@ function DocumentClient({
   useEffect(() => {
     setShowBacklinks(false)
   }, [id, setShowBacklinks])
+
+  useEffect(() => {
+    const snapshotId = 'snapshot-history'
+    const actions = documentActions ?? []
+    const snapshotAction = {
+      id: snapshotId,
+      label: 'Snapshots',
+      onSelect: openSnapshots,
+      disabled: !doc,
+      icon: <History className="h-[18px] w-[18px]" />,
+      tooltip: 'Snapshot history',
+    }
+    const existing = actions.find((action) => action.id === snapshotId)
+    if (!existing) {
+      setDocumentActions([...actions, snapshotAction])
+      return
+    }
+    if (
+      existing.onSelect !== snapshotAction.onSelect ||
+      existing.disabled !== snapshotAction.disabled ||
+      existing.label !== snapshotAction.label
+    ) {
+      setDocumentActions(actions.map((action) => (action.id === snapshotId ? snapshotAction : action)))
+    }
+  }, [documentActions, setDocumentActions, openSnapshots, doc])
 
   useEffect(() => {
     if (showBacklinks && showSecondaryViewer) {
@@ -263,6 +292,13 @@ function DocumentClient({
             ) : undefined)}
         />
       )}
+      <SnapshotHistoryDialog
+        documentId={id}
+        open={showSnapshots}
+        onOpenChange={setShowSnapshots}
+        token={shareToken}
+        canRestore={!isReadOnly}
+      />
     </div>
   )
 }

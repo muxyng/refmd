@@ -12,20 +12,20 @@ use git2::{
     CertificateCheckStatus, Commit, Cred, FetchOptions, FileMode, Indexer, ObjectType, PushOptions,
     RemoteCallbacks, Repository, Signature, Time, TreeWalkMode, TreeWalkResult,
 };
-use similar::{Algorithm, ChangeTag, TextDiff};
 use sqlx::{Row, types::Json};
 use tempfile::{Builder as TempDirBuilder, TempDir};
 use tracing::warn;
 use uuid::Uuid;
 
+use crate::application::dto::diff::TextDiffResult;
 use crate::application::dto::git::{
-    DiffLine, DiffLineType, DiffResult, GitChangeItem, GitCommitInfo, GitSyncOutcome,
-    GitSyncRequestDto, GitWorkspaceStatus,
+    GitChangeItem, GitCommitInfo, GitSyncOutcome, GitSyncRequestDto, GitWorkspaceStatus,
 };
 use crate::application::ports::git_repository::UserGitCfg;
 use crate::application::ports::git_storage::{BlobKey, CommitMeta, GitStorage, encode_commit_id};
 use crate::application::ports::git_workspace::GitWorkspacePort;
 use crate::application::ports::storage_port::StoragePort;
+use crate::application::services::diff::text_diff::compute_text_diff;
 use crate::infrastructure::db::PgPool;
 
 pub struct GitWorkspaceService {
@@ -361,57 +361,10 @@ impl GitWorkspaceService {
         path: &str,
         old_content: Option<&str>,
         new_content: Option<&str>,
-    ) -> DiffResult {
+    ) -> TextDiffResult {
         match (old_content, new_content) {
-            (Some(old), Some(new)) => {
-                let diff = TextDiff::configure()
-                    .algorithm(Algorithm::Myers)
-                    .diff_lines(old, new);
-                let mut lines = Vec::new();
-                let mut old_line = 0u32;
-                let mut new_line = 0u32;
-                for op in diff.ops() {
-                    for change in diff.iter_changes(op) {
-                        match change.tag() {
-                            ChangeTag::Delete => {
-                                old_line += 1;
-                                lines.push(DiffLine {
-                                    line_type: DiffLineType::Deleted,
-                                    old_line_number: Some(old_line),
-                                    new_line_number: None,
-                                    content: change.to_string().trim_end().to_string(),
-                                });
-                            }
-                            ChangeTag::Insert => {
-                                new_line += 1;
-                                lines.push(DiffLine {
-                                    line_type: DiffLineType::Added,
-                                    old_line_number: None,
-                                    new_line_number: Some(new_line),
-                                    content: change.to_string().trim_end().to_string(),
-                                });
-                            }
-                            ChangeTag::Equal => {
-                                old_line += 1;
-                                new_line += 1;
-                                lines.push(DiffLine {
-                                    line_type: DiffLineType::Context,
-                                    old_line_number: Some(old_line),
-                                    new_line_number: Some(new_line),
-                                    content: change.to_string().trim_end().to_string(),
-                                });
-                            }
-                        }
-                    }
-                }
-                DiffResult {
-                    file_path: path.to_string(),
-                    diff_lines: lines,
-                    old_content: Some(old.to_string()),
-                    new_content: Some(new.to_string()),
-                }
-            }
-            _ => DiffResult {
+            (Some(old), Some(new)) => compute_text_diff(old, new, path),
+            _ => TextDiffResult {
                 file_path: path.to_string(),
                 diff_lines: Vec::new(),
                 old_content: old_content.map(|s| s.to_string()),
@@ -425,7 +378,7 @@ impl GitWorkspaceService {
         user_id: Uuid,
         from_meta: Option<&CommitMeta>,
         to_meta: &CommitMeta,
-    ) -> anyhow::Result<Vec<DiffResult>> {
+    ) -> anyhow::Result<Vec<TextDiffResult>> {
         let (to_pack_dir, to_pack_paths) = persist_pack_chain(
             self.git_storage.as_ref(),
             user_id,
@@ -521,7 +474,7 @@ impl GitWorkspaceService {
         user_id: Uuid,
         from_meta: Option<&CommitMeta>,
         to_meta: Option<&CommitMeta>,
-    ) -> anyhow::Result<Vec<DiffResult>> {
+    ) -> anyhow::Result<Vec<TextDiffResult>> {
         let Some(to_meta) = to_meta else {
             return Ok(Vec::new());
         };
@@ -682,7 +635,7 @@ impl GitWorkspacePort for GitWorkspaceService {
         Ok(changes)
     }
 
-    async fn working_diff(&self, user_id: Uuid) -> anyhow::Result<Vec<DiffResult>> {
+    async fn working_diff(&self, user_id: Uuid) -> anyhow::Result<Vec<TextDiffResult>> {
         let latest = self.latest_commit_meta(user_id).await?;
         let previous_index = latest
             .as_ref()
@@ -713,7 +666,7 @@ impl GitWorkspacePort for GitWorkspaceService {
                         Some(&new_content),
                     ));
                 } else {
-                    results.push(DiffResult {
+                    results.push(TextDiffResult {
                         file_path: path.clone(),
                         diff_lines: Vec::new(),
                         old_content: None,
@@ -744,7 +697,7 @@ impl GitWorkspacePort for GitWorkspaceService {
         user_id: Uuid,
         from: &str,
         to: &str,
-    ) -> anyhow::Result<Vec<DiffResult>> {
+    ) -> anyhow::Result<Vec<TextDiffResult>> {
         let from_meta = self.load_commit_meta_ref(user_id, from).await?;
         let to_meta = self.load_commit_meta_ref(user_id, to).await?;
 

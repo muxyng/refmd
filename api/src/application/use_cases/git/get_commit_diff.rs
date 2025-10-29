@@ -1,4 +1,4 @@
-use crate::application::dto::git::DiffResult;
+use crate::application::dto::diff::TextDiffResult;
 use crate::application::ports::git_workspace::GitWorkspacePort;
 use uuid::Uuid;
 
@@ -12,7 +12,7 @@ impl<'a, W: GitWorkspacePort + ?Sized> GetCommitDiff<'a, W> {
         user_id: Uuid,
         from: String,
         to: String,
-    ) -> anyhow::Result<Vec<DiffResult>> {
+    ) -> anyhow::Result<Vec<TextDiffResult>> {
         self.workspace.commit_diff(user_id, &from, &to).await
     }
 }

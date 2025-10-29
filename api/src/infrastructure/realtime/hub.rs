@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use anyhow::Context;
+use chrono::Utc;
 use futures_util::SinkExt;
 use tokio::sync::mpsc;
 use tokio::sync::{Mutex, RwLock};
-use tokio::time::{Duration, sleep};
+use tokio::time::{Duration, Instant, sleep};
 use uuid::Uuid;
 use yrs::GetString;
 use yrs::encoding::write::Write as YWrite;
@@ -12,10 +14,11 @@ use yrs::sync::protocol::{MSG_SYNC, MSG_SYNC_UPDATE};
 use yrs::sync::{DefaultProtocol, Protocol};
 use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::{Encoder, EncoderV1};
-use yrs::{Doc, ReadTxn, StateVector, Transact, Update};
+use yrs::{Doc, ReadTxn, StateVector, Text, Transact, Update};
 use yrs_warp::AwarenessRef;
 use yrs_warp::broadcast::BroadcastGroup;
 
+use crate::application::ports::document_snapshot_archive_repository::DocumentSnapshotArchiveRepository;
 use crate::application::ports::linkgraph_repository::LinkGraphRepository;
 use crate::application::ports::realtime_hydration_port::{DocStateReader, RealtimeBacklogReader};
 use crate::application::ports::realtime_persistence_port::DocPersistencePort;
@@ -24,7 +27,9 @@ use crate::application::ports::tagging_repository::TaggingRepository;
 use crate::application::services::realtime::doc_hydration::{
     DocHydrationService, HydrationOptions,
 };
-use crate::application::services::realtime::snapshot::{SnapshotPersistOptions, SnapshotService};
+use crate::application::services::realtime::snapshot::{
+    SnapshotArchiveKind, SnapshotArchiveOptions, SnapshotPersistOptions, SnapshotService,
+};
 use crate::infrastructure::db::PgPool;
 use crate::infrastructure::db::repositories::linkgraph_repository_sqlx::SqlxLinkGraphRepository;
 use crate::infrastructure::db::repositories::tagging_repository_sqlx::SqlxTaggingRepository;
@@ -50,10 +55,17 @@ pub struct Hub {
     snapshot_service: Arc<SnapshotService>,
     persistence: Arc<dyn DocPersistencePort>,
     save_flags: Arc<Mutex<HashMap<String, bool>>>,
+    auto_archive_interval: Duration,
+    last_auto_archive: Arc<Mutex<HashMap<String, Instant>>>,
 }
 
 impl Hub {
-    pub fn new(pool: PgPool, storage: Arc<dyn StoragePort>) -> Self {
+    pub fn new(
+        pool: PgPool,
+        storage: Arc<dyn StoragePort>,
+        archives: Arc<dyn DocumentSnapshotArchiveRepository>,
+        auto_archive_interval: Duration,
+    ) -> Self {
         let doc_state_reader: Arc<dyn DocStateReader> =
             Arc::new(SqlxDocStateReader::new(pool.clone()));
         let backlog_reader: Arc<dyn RealtimeBacklogReader> = Arc::new(NoopBacklogReader::default());
@@ -73,6 +85,7 @@ impl Hub {
             storage,
             linkgraph_repo,
             tagging_repo,
+            archives,
         ));
 
         Self {
@@ -81,6 +94,8 @@ impl Hub {
             snapshot_service,
             persistence,
             save_flags: Arc::new(Mutex::new(HashMap::new())),
+            auto_archive_interval,
+            last_auto_archive: Arc::new(Mutex::new(HashMap::new())),
         }
     }
     pub async fn get_or_create(&self, doc_id: &str) -> anyhow::Result<Arc<DocumentRoom>> {
@@ -106,6 +121,8 @@ impl Hub {
         let (tx, mut rx) = mpsc::channel::<Vec<u8>>(512);
         let persistence = self.persistence.clone();
         let snapshot_service = self.snapshot_service.clone();
+        let last_auto_archive = self.last_auto_archive.clone();
+        let auto_archive_interval = self.auto_archive_interval;
         let persist_doc = doc_uuid;
         let persist_seq = seq.clone();
         let doc_for_snap = doc.clone();
@@ -125,24 +142,69 @@ impl Hub {
                         "persist_document_update_failed"
                     );
                 }
-                if s % 100 == 0 {
-                    if let Err(e) = snapshot_service
-                        .persist_snapshot(
-                            &persist_doc,
-                            &doc_for_snap,
-                            SnapshotPersistOptions {
-                                clear_updates: false,
-                                ..Default::default()
-                            },
-                        )
-                        .await
-                    {
-                        tracing::error!(
-                            document_id = %persist_doc,
-                            version = s,
-                            error = ?e,
-                            "persist_document_snapshot_failed"
-                        );
+                if s % 100 == 0 && !auto_archive_interval.is_zero() {
+                    let should_archive = {
+                        let mut guard = last_auto_archive.lock().await;
+                        let now = Instant::now();
+                        match guard.get(&persist_doc.to_string()) {
+                            Some(last) if now.duration_since(*last) < auto_archive_interval => {
+                                false
+                            }
+                            _ => {
+                                guard.insert(persist_doc.to_string(), now);
+                                true
+                            }
+                        }
+                    };
+
+                    if should_archive {
+                        match snapshot_service
+                            .persist_snapshot(
+                                &persist_doc,
+                                &doc_for_snap,
+                                SnapshotPersistOptions {
+                                    clear_updates: false,
+                                    ..Default::default()
+                                },
+                            )
+                            .await
+                        {
+                            Ok(result) => {
+                                let label = format!(
+                                    "Snapshot {}",
+                                    Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+                                );
+                                if let Err(e) = snapshot_service
+                                    .archive_snapshot(
+                                        &persist_doc,
+                                        &result.snapshot_bytes,
+                                        result.version,
+                                        SnapshotArchiveOptions {
+                                            label: label.as_str(),
+                                            notes: None,
+                                            kind: SnapshotArchiveKind::Automatic,
+                                            created_by: None,
+                                        },
+                                    )
+                                    .await
+                                {
+                                    tracing::debug!(
+                                        document_id = %persist_doc,
+                                        version = result.version,
+                                        error = ?e,
+                                        "persist_document_snapshot_archive_failed"
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    document_id = %persist_doc,
+                                    version = s,
+                                    error = ?e,
+                                    "persist_document_snapshot_failed"
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -228,22 +290,6 @@ impl Hub {
                         }
                     }
 
-                    let hydrated_is_empty = {
-                        let txt = hydrated_state.doc.get_or_insert_text("content");
-                        let txn = hydrated_state.doc.transact();
-                        let len = yrs::Text::len(&txt, &txn);
-                        drop(txn);
-                        len == 0
-                    };
-
-                    if hydrated_is_empty {
-                        let txt = doc.get_or_insert_text("content");
-                        let mut txn = doc.transact_mut();
-                        if yrs::Text::len(&txt, &txn) == 0 {
-                            yrs::Text::push(&txt, &mut txn, "# New Document\n\nStart typing...");
-                        }
-                    }
-
                     {
                         let mut guard = seq_for_hydrate.lock().await;
                         if hydrated_state.last_seq > *guard {
@@ -276,14 +322,65 @@ impl Hub {
         Ok(room)
     }
 
-    pub async fn get_content(&self, doc_id: &str) -> anyhow::Result<Option<String>> {
-        let map = self.inner.read().await;
-        let room = match map.get(doc_id) {
-            Some(room) => room.clone(),
-            None => return Ok(None),
+    pub fn snapshot_service(&self) -> Arc<SnapshotService> {
+        self.snapshot_service.clone()
+    }
+
+    pub async fn apply_snapshot(&self, doc_id: &str, snapshot: &Doc) -> anyhow::Result<()> {
+        let room = self.get_or_create(doc_id).await?;
+        let new_markdown = {
+            let txt_new = snapshot.get_or_insert_text("content");
+            let txn = snapshot.transact();
+            txt_new.get_string(&txn)
         };
-        let txt = room.doc.get_or_insert_text("content");
-        let txn = room.doc.transact();
+
+        let update_bytes = {
+            let txt = room.doc.get_or_insert_text("content");
+            let mut txn = room.doc.transact_mut();
+            let len = txt.len(&txn);
+            if len > 0 {
+                txt.remove_range(&mut txn, 0, len);
+            }
+            if !new_markdown.is_empty() {
+                txt.insert(&mut txn, 0, &new_markdown);
+            }
+            txn.encode_update_v1()
+        };
+
+        if update_bytes.is_empty() {
+            return Ok(());
+        }
+
+        let mut encoder = EncoderV1::new();
+        encoder.write_var(MSG_SYNC);
+        encoder.write_var(MSG_SYNC_UPDATE);
+        encoder.write_buf(&update_bytes);
+        let frame = encoder.to_vec();
+        room.broadcast
+            .broadcast(frame)
+            .map_err(|err| anyhow::anyhow!(err))
+            .context("broadcast_snapshot_update")?;
+
+        Ok(())
+    }
+
+    pub async fn get_content(&self, doc_id: &str) -> anyhow::Result<Option<String>> {
+        if let Some(room) = self.inner.read().await.get(doc_id).cloned() {
+            let txt = room.doc.get_or_insert_text("content");
+            let txn = room.doc.transact();
+            return Ok(Some(txt.get_string(&txn)));
+        }
+
+        let uuid = match Uuid::parse_str(doc_id) {
+            Ok(id) => id,
+            Err(_) => return Ok(None),
+        };
+        let hydrated = self
+            .hydration_service
+            .hydrate(&uuid, HydrationOptions::default())
+            .await?;
+        let txt = hydrated.doc.get_or_insert_text("content");
+        let txn = hydrated.doc.transact();
         Ok(Some(txt.get_string(&txn)))
     }
 }

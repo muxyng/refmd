@@ -1,10 +1,13 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, anyhow};
+use chrono::Utc;
 use futures_util::{SinkExt, StreamExt};
+use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-use tokio::time::sleep;
+use tokio::time::{Instant, sleep};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use uuid::Uuid;
 use yrs::encoding::read::Cursor;
@@ -14,9 +17,10 @@ use yrs::sync::protocol::{MSG_SYNC, MSG_SYNC_UPDATE};
 use yrs::sync::{DefaultProtocol, Message, MessageReader, Protocol, SyncMessage};
 use yrs::updates::decoder::DecoderV1;
 use yrs::updates::encoder::{Encoder, EncoderV1};
-use yrs::{Doc, GetString, ReadTxn, StateVector, Transact};
+use yrs::{Doc, GetString, ReadTxn, StateVector, Text, Transact};
 
 use crate::application::ports::awareness_port::AwarenessPublisher;
+use crate::application::ports::document_snapshot_archive_repository::DocumentSnapshotArchiveRepository;
 use crate::application::ports::linkgraph_repository::LinkGraphRepository;
 use crate::application::ports::realtime_hydration_port::{DocStateReader, RealtimeBacklogReader};
 use crate::application::ports::realtime_persistence_port::DocPersistencePort;
@@ -28,9 +32,12 @@ use crate::application::services::realtime::awareness::{AwarenessService, encode
 use crate::application::services::realtime::doc_hydration::{
     DocHydrationService, HydrationOptions,
 };
-use crate::application::services::realtime::snapshot::{SnapshotPersistOptions, SnapshotService};
+use crate::application::services::realtime::snapshot::{
+    SnapshotArchiveKind, SnapshotArchiveOptions, SnapshotPersistOptions, SnapshotService,
+};
 use crate::bootstrap::config::Config;
 use crate::infrastructure::db::PgPool;
+use crate::infrastructure::db::repositories::document_snapshot_archive_repository_sqlx::SqlxDocumentSnapshotArchiveRepository;
 use crate::infrastructure::db::repositories::linkgraph_repository_sqlx::SqlxLinkGraphRepository;
 use crate::infrastructure::db::repositories::tagging_repository_sqlx::SqlxTaggingRepository;
 use crate::infrastructure::realtime::{SqlxDocPersistenceAdapter, SqlxDocStateReader};
@@ -78,13 +85,19 @@ impl RedisRealtimeEngine {
             Arc::new(SqlxLinkGraphRepository::new(pool.clone()));
         let tagging_repo: Arc<dyn TaggingRepository> =
             Arc::new(SqlxTaggingRepository::new(pool.clone()));
+        let archive_repo: Arc<dyn DocumentSnapshotArchiveRepository> =
+            Arc::new(SqlxDocumentSnapshotArchiveRepository::new(pool.clone()));
         let snapshot_service = Arc::new(SnapshotService::new(
             doc_state_reader,
             doc_persistence,
             storage.clone(),
             linkgraph_repo,
             tagging_repo,
+            archive_repo,
         ));
+        let auto_archive_interval = Duration::from_secs(cfg.snapshot_archive_interval_secs);
+        let last_auto_archive: Arc<Mutex<HashMap<String, Instant>>> =
+            Arc::new(Mutex::new(HashMap::new()));
 
         let trim_lifetime = if cfg.redis_min_message_lifetime_ms > 0 {
             Some(Duration::from_millis(cfg.redis_min_message_lifetime_ms))
@@ -98,6 +111,8 @@ impl RedisRealtimeEngine {
             hydration_service.clone(),
             snapshot_service.clone(),
             trim_lifetime,
+            auto_archive_interval,
+            last_auto_archive.clone(),
         );
 
         Ok(Self {
@@ -108,6 +123,10 @@ impl RedisRealtimeEngine {
             awareness_ttl: Duration::from_millis(cfg.redis_awareness_ttl_ms),
             _worker: worker,
         })
+    }
+
+    pub fn snapshot_service(&self) -> Arc<SnapshotService> {
+        self.snapshot_service.clone()
     }
 
     async fn send_initial_sync(&self, doc: &Doc, sink: &DynRealtimeSink) -> anyhow::Result<()> {
@@ -362,6 +381,41 @@ impl RealtimeEngineTrait for RedisRealtimeEngine {
             .await?;
         Ok(())
     }
+
+    async fn apply_snapshot(&self, doc_id: &str, doc: &Doc) -> anyhow::Result<()> {
+        let uuid = Uuid::parse_str(doc_id)?;
+        let hydrated = self
+            .hydration_service
+            .hydrate(&uuid, HydrationOptions::default())
+            .await?;
+        let update_bytes = {
+            let txt_new = doc.get_or_insert_text("content");
+            let txn_new = doc.transact();
+            let new_markdown = txt_new.get_string(&txn_new);
+            drop(txn_new);
+
+            let txt = hydrated.doc.get_or_insert_text("content");
+            let mut txn = hydrated.doc.transact_mut();
+            let len = txt.len(&txn);
+            if len > 0 {
+                txt.remove_range(&mut txn, 0, len);
+            }
+            if !new_markdown.is_empty() {
+                txt.insert(&mut txn, 0, &new_markdown);
+            }
+            txn.encode_update_v1()
+        };
+        if update_bytes.is_empty() {
+            return Ok(());
+        }
+        let mut encoder = EncoderV1::new();
+        encoder.write_var(MSG_SYNC);
+        encoder.write_var(MSG_SYNC_UPDATE);
+        encoder.write_buf(&update_bytes);
+        let frame = encoder.to_vec();
+        self.bus.publish_update(doc_id, frame).await?;
+        Ok(())
+    }
 }
 
 fn analyse_frame(frame: &[u8]) -> anyhow::Result<FrameSummary> {
@@ -394,6 +448,8 @@ fn spawn_persistence_worker(
     hydration_service: Arc<DocHydrationService>,
     snapshot_service: Arc<SnapshotService>,
     trim_lifetime: Option<Duration>,
+    auto_archive_interval: Duration,
+    last_auto_archive: Arc<Mutex<HashMap<String, Instant>>>,
 ) -> Option<JoinHandle<()>> {
     if !cfg.cluster_mode {
         return None;
@@ -428,7 +484,7 @@ fn spawn_persistence_worker(
                                     "redis_worker_markdown_failed"
                                 );
                             }
-                            if let Err(e) = snapshot_service
+                            match snapshot_service
                                 .persist_snapshot(
                                     &doc_uuid,
                                     &hydrated.doc,
@@ -439,11 +495,60 @@ fn spawn_persistence_worker(
                                 )
                                 .await
                             {
-                                tracing::error!(
-                                    document_id = %doc_uuid,
-                                    error = ?e,
-                                    "redis_worker_snapshot_failed"
-                                );
+                                Ok(result) => {
+                                    if !auto_archive_interval.is_zero() {
+                                        let should_archive = {
+                                            let mut guard = last_auto_archive.lock().await;
+                                            let now = Instant::now();
+                                            match guard.get(&doc_id_owned) {
+                                                Some(last)
+                                                    if now.duration_since(*last)
+                                                        < auto_archive_interval =>
+                                                {
+                                                    false
+                                                }
+                                                _ => {
+                                                    guard.insert(doc_id_owned.clone(), now);
+                                                    true
+                                                }
+                                            }
+                                        };
+                                        if should_archive {
+                                            let label = format!(
+                                                "Snapshot {}",
+                                                Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+                                            );
+                                            if let Err(e) = snapshot_service
+                                                .archive_snapshot(
+                                                    &doc_uuid,
+                                                    &result.snapshot_bytes,
+                                                    result.version,
+                                                    SnapshotArchiveOptions {
+                                                        label: label.as_str(),
+                                                        notes: None,
+                                                        kind: SnapshotArchiveKind::Automatic,
+                                                        created_by: None,
+                                                    },
+                                                )
+                                                .await
+                                            {
+                                                tracing::debug!(
+                                                    document_id = %doc_uuid,
+                                                    version = result.version,
+                                                    error = ?e,
+                                                    "redis_worker_snapshot_archive_failed"
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::error!(
+                                        document_id = %doc_uuid,
+                                        error = ?e,
+                                        "redis_worker_snapshot_failed"
+                                    );
+                                }
                             }
                             if let Err(e) = bus.ack_task(&entry_id).await {
                                 tracing::debug!(

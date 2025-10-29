@@ -3,13 +3,14 @@ use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::application::access;
+use crate::application::ports::document_snapshot_archive_repository::SnapshotArchiveRecord;
 use crate::application::use_cases::documents::create_document::CreateDocument;
 use crate::application::use_cases::documents::delete_document::DeleteDocument;
 use crate::application::use_cases::documents::download_document::DownloadDocument as DownloadDocumentUseCase;
@@ -17,11 +18,18 @@ use crate::application::use_cases::documents::get_backlinks::GetBacklinks;
 use crate::application::use_cases::documents::get_document::GetDocument;
 use crate::application::use_cases::documents::get_outgoing_links::GetOutgoingLinks;
 use crate::application::use_cases::documents::list_documents::ListDocuments;
+use crate::application::use_cases::documents::list_snapshots::ListSnapshots;
+use crate::application::use_cases::documents::restore_snapshot::RestoreSnapshot;
 use crate::application::use_cases::documents::search_documents::SearchDocuments;
+use crate::application::use_cases::documents::snapshot_diff::{
+    SnapshotDiff, SnapshotDiffBase, SnapshotDiffBaseMode,
+};
+use crate::application::use_cases::documents::snapshot_download::DownloadSnapshot;
 use crate::application::use_cases::documents::update_document::UpdateDocument;
 use crate::bootstrap::app_context::AppContext;
 use crate::domain::documents::document as domain;
 use crate::presentation::http::auth::{self, Bearer};
+use crate::presentation::http::git::DocumentDiffResult;
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct Document {
@@ -37,6 +45,89 @@ pub struct Document {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct DocumentListResponse {
     pub items: Vec<Document>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SnapshotSummary {
+    pub id: Uuid,
+    pub document_id: Uuid,
+    pub label: String,
+    pub notes: Option<String>,
+    pub kind: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_by: Option<Uuid>,
+    pub byte_size: i64,
+    pub content_hash: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SnapshotListResponse {
+    pub items: Vec<SnapshotSummary>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum SnapshotDiffKind {
+    Current,
+    Snapshot,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SnapshotDiffBaseResponse {
+    pub kind: SnapshotDiffKind,
+    pub markdown: String,
+    pub snapshot: Option<SnapshotSummary>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SnapshotDiffResponse {
+    pub target: SnapshotSummary,
+    pub target_markdown: String,
+    pub base: SnapshotDiffBaseResponse,
+    pub diff: DocumentDiffResult,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SnapshotDiffBaseParam {
+    Auto,
+    Current,
+    Previous,
+}
+
+impl Default for SnapshotDiffBaseParam {
+    fn default() -> Self {
+        Self::Auto
+    }
+}
+
+impl From<SnapshotDiffBaseParam> for SnapshotDiffBaseMode {
+    fn from(value: SnapshotDiffBaseParam) -> Self {
+        match value {
+            SnapshotDiffBaseParam::Auto => SnapshotDiffBaseMode::Auto,
+            SnapshotDiffBaseParam::Current => SnapshotDiffBaseMode::ForceCurrent,
+            SnapshotDiffBaseParam::Previous => SnapshotDiffBaseMode::ForcePrevious,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SnapshotRestoreResponse {
+    pub snapshot: SnapshotSummary,
+}
+
+fn snapshot_summary_from(record: SnapshotArchiveRecord) -> SnapshotSummary {
+    SnapshotSummary {
+        id: record.id,
+        document_id: record.document_id,
+        label: record.label,
+        notes: record.notes,
+        kind: record.kind,
+        created_at: record.created_at,
+        created_by: record.created_by,
+        byte_size: record.byte_size,
+        content_hash: record.content_hash,
+    }
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -363,6 +454,230 @@ pub async fn update_document(
     }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/documents/{id}/snapshots",
+    tag = "Documents",
+    params(
+        ("id" = Uuid, Path, description = "Document ID"),
+        ("token" = Option<String>, Query, description = "Share token (optional)"),
+        ("limit" = Option<i64>, Query, description = "Maximum number of snapshots to return"),
+        ("offset" = Option<i64>, Query, description = "Offset for pagination")
+    ),
+    responses((status = 200, body = SnapshotListResponse))
+)]
+pub async fn list_document_snapshots(
+    State(ctx): State<AppContext>,
+    bearer: Option<Bearer>,
+    Path(id): Path<Uuid>,
+    q: Option<Query<ListSnapshotsQuery>>,
+) -> Result<Json<SnapshotListResponse>, StatusCode> {
+    let params = q.map(|Query(v)| v).unwrap_or_default();
+    let token = params.token.as_deref();
+    let actor =
+        auth::resolve_actor_from_parts(&ctx.cfg, bearer, token).ok_or(StatusCode::UNAUTHORIZED)?;
+
+    let access_repo = ctx.access_repo();
+    let share_access = ctx.share_access_port();
+    access::require_view(access_repo.as_ref(), share_access.as_ref(), &actor, id)
+        .await
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    let limit = params.limit.unwrap_or(50).clamp(1, 200);
+    let offset = params.offset.unwrap_or(0).max(0);
+
+    let snapshot_service = ctx.snapshot_service();
+    let uc = ListSnapshots {
+        snapshots: snapshot_service.as_ref(),
+    };
+    let records = uc
+        .execute(id, limit, offset)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let items = records.into_iter().map(snapshot_summary_from).collect();
+
+    Ok(Json(SnapshotListResponse { items }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/documents/{id}/snapshots/{snapshot_id}/diff",
+    tag = "Documents",
+    params(
+        ("id" = Uuid, Path, description = "Document ID"),
+        ("snapshot_id" = Uuid, Path, description = "Snapshot ID"),
+        ("token" = Option<String>, Query, description = "Share token (optional)"),
+        ("compare" = Option<Uuid>, Query, description = "Snapshot ID to compare against (defaults to current document state)"),
+        ("base" = Option<SnapshotDiffBaseParam>, Query, description = "Base comparison to use when compare is not provided (auto|current|previous)")
+    ),
+    responses((status = 200, body = SnapshotDiffResponse))
+)]
+pub async fn get_document_snapshot_diff(
+    State(ctx): State<AppContext>,
+    bearer: Option<Bearer>,
+    Path((id, snapshot_id)): Path<(Uuid, Uuid)>,
+    q: Option<Query<SnapshotDiffQuery>>,
+) -> Result<Json<SnapshotDiffResponse>, StatusCode> {
+    let params = q.map(|Query(v)| v).unwrap_or_default();
+    let token = params.token.as_deref();
+    let actor =
+        auth::resolve_actor_from_parts(&ctx.cfg, bearer, token).ok_or(StatusCode::UNAUTHORIZED)?;
+
+    let access_repo = ctx.access_repo();
+    let share_access = ctx.share_access_port();
+    access::require_view(access_repo.as_ref(), share_access.as_ref(), &actor, id)
+        .await
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    let snapshot_service = ctx.snapshot_service();
+    let realtime = ctx.realtime_engine();
+    let uc = SnapshotDiff {
+        snapshots: snapshot_service.as_ref(),
+        realtime: realtime.as_ref(),
+    };
+    let base_mode = params
+        .base
+        .map(SnapshotDiffBaseMode::from)
+        .unwrap_or(SnapshotDiffBaseMode::Auto);
+
+    let result = uc
+        .execute(id, snapshot_id, params.compare, base_mode)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let diff = DocumentDiffResult::from(result.diff);
+    let target = snapshot_summary_from(result.target);
+    let base = match result.base {
+        SnapshotDiffBase::Current { markdown } => SnapshotDiffBaseResponse {
+            kind: SnapshotDiffKind::Current,
+            markdown,
+            snapshot: None,
+        },
+        SnapshotDiffBase::Snapshot { record, markdown } => SnapshotDiffBaseResponse {
+            kind: SnapshotDiffKind::Snapshot,
+            markdown,
+            snapshot: Some(snapshot_summary_from(record)),
+        },
+    };
+
+    Ok(Json(SnapshotDiffResponse {
+        target,
+        target_markdown: result.target_markdown,
+        base,
+        diff,
+    }))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/documents/{id}/snapshots/{snapshot_id}/restore",
+    tag = "Documents",
+    params(
+        ("id" = Uuid, Path, description = "Document ID"),
+        ("snapshot_id" = Uuid, Path, description = "Snapshot ID"),
+        ("token" = Option<String>, Query, description = "Share token (optional)")
+    ),
+    responses((status = 200, body = SnapshotRestoreResponse))
+)]
+pub async fn restore_document_snapshot(
+    State(ctx): State<AppContext>,
+    bearer: Option<Bearer>,
+    Path((id, snapshot_id)): Path<(Uuid, Uuid)>,
+    q: Option<Query<SnapshotTokenQuery>>,
+) -> Result<Json<SnapshotRestoreResponse>, StatusCode> {
+    let params = q.map(|Query(v)| v).unwrap_or_default();
+    let token = params.token.as_deref();
+    let actor =
+        auth::resolve_actor_from_parts(&ctx.cfg, bearer, token).ok_or(StatusCode::UNAUTHORIZED)?;
+
+    let access_repo = ctx.access_repo();
+    let share_access = ctx.share_access_port();
+    access::require_edit(access_repo.as_ref(), share_access.as_ref(), &actor, id)
+        .await
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    let created_by = match &actor {
+        access::Actor::User(uid) => Some(*uid),
+        _ => None,
+    };
+
+    let snapshot_service = ctx.snapshot_service();
+    let realtime = ctx.realtime_engine();
+    let uc = RestoreSnapshot {
+        snapshots: snapshot_service.as_ref(),
+        realtime: realtime.as_ref(),
+    };
+    let restored = uc
+        .execute(id, snapshot_id, created_by)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    Ok(Json(SnapshotRestoreResponse {
+        snapshot: snapshot_summary_from(restored),
+    }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/documents/{id}/snapshots/{snapshot_id}/download",
+    tag = "Documents",
+    params(
+        ("id" = Uuid, Path, description = "Document ID"),
+        ("snapshot_id" = Uuid, Path, description = "Snapshot ID"),
+        ("token" = Option<String>, Query, description = "Share token (optional)")
+    ),
+    responses(
+        (status = 200, description = "Snapshot archive", body = DocumentArchiveBinary, content_type = "application/zip"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Snapshot not found")
+    )
+)]
+pub async fn download_document_snapshot(
+    State(ctx): State<AppContext>,
+    bearer: Option<Bearer>,
+    Path((id, snapshot_id)): Path<(Uuid, Uuid)>,
+    q: Option<Query<SnapshotTokenQuery>>,
+) -> Result<Response, StatusCode> {
+    let params = q.map(|Query(v)| v).unwrap_or_default();
+    let token = params.token.as_deref();
+    let actor =
+        auth::resolve_actor_from_parts(&ctx.cfg, bearer, token).ok_or(StatusCode::UNAUTHORIZED)?;
+
+    let access_repo = ctx.access_repo();
+    let share_access = ctx.share_access_port();
+    access::require_view(access_repo.as_ref(), share_access.as_ref(), &actor, id)
+        .await
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    let files = ctx.files_repo();
+    let storage = ctx.storage_port();
+    let snapshot_service = ctx.snapshot_service();
+    let uc = DownloadSnapshot {
+        files: files.as_ref(),
+        storage: storage.as_ref(),
+        snapshots: snapshot_service.as_ref(),
+    };
+    let download = uc
+        .execute(id, snapshot_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        axum::http::header::CONTENT_TYPE,
+        HeaderValue::from_static("application/zip"),
+    );
+    let disposition = format!("attachment; filename=\"{}\"", download.filename);
+    let content_disposition =
+        HeaderValue::from_str(&disposition).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    headers.insert(axum::http::header::CONTENT_DISPOSITION, content_disposition);
+
+    Ok((headers, download.bytes).into_response())
+}
+
 pub fn routes(ctx: AppContext) -> Router {
     Router::new()
         .route("/documents", get(list_documents).post(create_document))
@@ -373,6 +688,19 @@ pub fn routes(ctx: AppContext) -> Router {
                 .patch(update_document),
         )
         .route("/documents/:id/content", get(get_document_content))
+        .route("/documents/:id/snapshots", get(list_document_snapshots))
+        .route(
+            "/documents/:id/snapshots/:snapshot_id/diff",
+            get(get_document_snapshot_diff),
+        )
+        .route(
+            "/documents/:id/snapshots/:snapshot_id/restore",
+            post(restore_document_snapshot),
+        )
+        .route(
+            "/documents/:id/snapshots/:snapshot_id/download",
+            get(download_document_snapshot),
+        )
         .route("/documents/:id/download", get(download_document))
         .route("/documents/:id/backlinks", get(get_backlinks))
         .route("/documents/:id/links", get(get_outgoing_links))
@@ -392,6 +720,26 @@ pub struct SearchResult {
 #[derive(Debug, Deserialize)]
 pub struct SearchQuery {
     pub q: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct ListSnapshotsQuery {
+    pub token: Option<String>,
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct SnapshotDiffQuery {
+    pub token: Option<String>,
+    pub compare: Option<Uuid>,
+    #[serde(default)]
+    pub base: Option<SnapshotDiffBaseParam>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct SnapshotTokenQuery {
+    pub token: Option<String>,
 }
 
 #[utoipa::path(get, path = "/api/documents/search", tag = "Documents",

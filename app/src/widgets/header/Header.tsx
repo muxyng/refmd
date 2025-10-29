@@ -70,6 +70,8 @@ export function Header({ className, realtime, variant = 'overlay' }: HeaderProps
   const documentBadge = rt.documentBadge
   const documentStatus = rt.documentStatus
   const documentActions = rt.documentActions ?? []
+  const textActions = documentActions.filter((action) => !action.icon)
+  const iconActions = documentActions.filter((action) => action.icon)
   const handleDocumentActionClick = useCallback((action: DocumentHeaderAction) => {
     try {
       action.onSelect?.()
@@ -246,9 +248,9 @@ export function Header({ className, realtime, variant = 'overlay' }: HeaderProps
         </div>
 
         <div className="flex items-center gap-2">
-          {documentActions.length > 0 && (
+          {textActions.length > 0 && (
             <div className="flex items-center gap-1">
-              {documentActions.map((action) => (
+              {textActions.map((action) => (
                 <Button
                   key={action.id ?? action.label}
                   onClick={() => handleDocumentActionClick(action)}
@@ -311,6 +313,27 @@ export function Header({ className, realtime, variant = 'overlay' }: HeaderProps
             </div>
           )}
 
+          {iconActions.map((action) => (
+            <Tooltip key={action.id ?? action.label}>
+              <TooltipTrigger asChild>
+                <span>
+                  <Button
+                    onClick={() => handleDocumentActionClick(action)}
+                    variant="ghost"
+                    className={cn(
+                      'h-9 w-9 rounded-full transition-colors hover:bg-muted/70',
+                      action.disabled && 'opacity-50',
+                    )}
+                    disabled={action.disabled}
+                    aria-label={action.tooltip ?? action.label}
+                  >
+                    {action.icon}
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>{action.tooltip ?? action.label}</TooltipContent>
+            </Tooltip>
+          ))}
           {canDownload && (
             <Tooltip>
               <TooltipTrigger asChild>

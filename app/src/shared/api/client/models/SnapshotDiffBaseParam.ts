@@ -2,8 +2,8 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-export enum GitDiffLineType {
-    ADDED = 'added',
-    DELETED = 'deleted',
-    CONTEXT = 'context',
+export enum SnapshotDiffBaseParam {
+    AUTO = 'auto',
+    CURRENT = 'current',
+    PREVIOUS = 'previous',
 }

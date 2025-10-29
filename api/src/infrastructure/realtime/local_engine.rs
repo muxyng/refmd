@@ -1,5 +1,6 @@
 use crate::application::ports::realtime_port::RealtimeEngine;
 use crate::application::ports::realtime_types::{DynRealtimeSink, DynRealtimeStream};
+use yrs::Doc;
 
 pub struct LocalRealtimeEngine {
     pub hub: crate::infrastructure::realtime::Hub,
@@ -23,5 +24,9 @@ impl RealtimeEngine for LocalRealtimeEngine {
 
     async fn force_persist(&self, doc_id: &str) -> anyhow::Result<()> {
         self.hub.force_save_to_fs(doc_id).await
+    }
+
+    async fn apply_snapshot(&self, doc_id: &str, doc: &Doc) -> anyhow::Result<()> {
+        self.hub.apply_snapshot(doc_id, doc).await
     }
 }
