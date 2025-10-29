@@ -20,6 +20,7 @@ use api::application::ports::plugin_installer::PluginInstaller;
 use api::application::ports::plugin_runtime::PluginRuntime;
 use api::bootstrap::app_context::{AppContext, AppServices};
 use api::bootstrap::config::{Config, StorageBackend};
+use api::infrastructure::db::advisory_lock::AdvisoryLock;
 use api::infrastructure::plugins::filesystem_store::PluginExecutionLimits;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
@@ -578,22 +579,40 @@ async fn main() -> anyhow::Result<()> {
     });
 
     // Background snapshots
+    const SNAPSHOT_LOCK_KEY: i64 = i64::from_be_bytes(*b"REFSNAP1");
+
     let snap_handle: Option<JoinHandle<anyhow::Result<()>>> = if cfg.cluster_mode {
         None
     } else {
         let hub_for_snap = hub.clone();
         let cfg_for_snap = cfg.clone();
+        let pool_for_snap = pool.clone();
         Some(tokio::spawn(async move {
             let interval = Duration::from_secs(cfg_for_snap.snapshot_interval_secs);
             loop {
-                if let Err(e) = hub_for_snap
-                    .snapshot_all(
-                        cfg_for_snap.snapshot_keep_versions,
-                        cfg_for_snap.updates_keep_window,
-                    )
-                    .await
-                {
-                    tracing::error!(error = ?e, "snapshot_loop_failed");
+                match AdvisoryLock::try_acquire(&pool_for_snap, SNAPSHOT_LOCK_KEY).await {
+                    Ok(Some(lock)) => {
+                        let snapshot_result = hub_for_snap
+                            .snapshot_all(
+                                cfg_for_snap.snapshot_keep_versions,
+                                cfg_for_snap.updates_keep_window,
+                            )
+                            .await;
+
+                        if let Err(e) = lock.release().await {
+                            tracing::error!(error = ?e, "snapshot_lock_release_failed");
+                        }
+
+                        if let Err(e) = snapshot_result {
+                            tracing::error!(error = ?e, "snapshot_loop_failed");
+                        }
+                    }
+                    Ok(None) => {
+                        tracing::debug!("snapshot_loop_skipped_lock_held");
+                    }
+                    Err(e) => {
+                        tracing::error!(error = ?e, "snapshot_lock_error");
+                    }
                 }
                 sleep(interval).await;
             }

@@ -16,4 +16,5 @@ pub async fn migrate(pool: &PgPool) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub mod advisory_lock;
 pub mod repositories;
