@@ -134,10 +134,14 @@ impl PublicRepository for SqlxPublicRepository {
             chrono::DateTime<chrono::Utc>,
             chrono::DateTime<chrono::Utc>,
             Option<String>,
+            Option<chrono::DateTime<chrono::Utc>>,
+            Option<Uuid>,
+            Option<Uuid>,
         )>,
     > {
         let row = sqlx::query(
-            r#"SELECT d.id, d.title, d.parent_id, d.type, d.created_at, d.updated_at, d.path
+            r#"SELECT d.id, d.title, d.parent_id, d.type, d.created_at, d.updated_at, d.path,
+                      d.archived_at, d.archived_by, d.archived_parent_id
                FROM public_documents p
                JOIN documents d ON p.document_id = d.id
                JOIN users u ON d.owner_id = u.id
@@ -156,6 +160,9 @@ impl PublicRepository for SqlxPublicRepository {
                 r.get("created_at"),
                 r.get("updated_at"),
                 r.try_get("path").ok(),
+                r.try_get("archived_at").ok(),
+                r.try_get("archived_by").ok(),
+                r.try_get("archived_parent_id").ok(),
             )
         }))
     }

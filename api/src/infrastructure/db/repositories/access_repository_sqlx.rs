@@ -36,4 +36,15 @@ impl AccessRepository for SqlxAccessRepository {
         .await?;
         Ok(count > 0)
     }
+
+    async fn is_document_archived(&self, doc_id: Uuid) -> anyhow::Result<bool> {
+        let archived = sqlx::query_scalar::<_, bool>(
+            "SELECT archived_at IS NOT NULL FROM documents WHERE id = $1",
+        )
+        .bind(doc_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .unwrap_or(false);
+        Ok(archived)
+    }
 }

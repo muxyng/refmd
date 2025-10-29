@@ -184,6 +184,9 @@ pub async fn get_public_by_owner_and_id(
         created_at: d.created_at,
         updated_at: d.updated_at,
         path: d.path,
+        archived_at: d.archived_at,
+        archived_by: d.archived_by,
+        archived_parent_id: d.archived_parent_id,
     }))
 }
 

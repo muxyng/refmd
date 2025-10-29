@@ -25,6 +25,7 @@ export class DocumentsService {
     public static listDocuments({
         query,
         tag,
+        state,
     }: {
         /**
          * Search query
@@ -34,6 +35,10 @@ export class DocumentsService {
          * Filter by tag
          */
         tag?: string | null,
+        /**
+         * Filter by document state (active|archived|all)
+         */
+        state?: string | null,
     }): CancelablePromise<DocumentListResponse> {
         return __request(OpenAPI, {
             method: 'GET',
@@ -41,6 +46,7 @@ export class DocumentsService {
             query: {
                 'query': query,
                 'tag': tag,
+                'state': state,
             },
         });
     }
@@ -150,6 +156,30 @@ export class DocumentsService {
             },
             body: requestBody,
             mediaType: 'application/json',
+        });
+    }
+    /**
+     * @returns Document
+     * @throws ApiError
+     */
+    public static archiveDocument({
+        id,
+    }: {
+        /**
+         * Document ID
+         */
+        id: string,
+    }): CancelablePromise<Document> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/documents/{id}/archive',
+            path: {
+                'id': id,
+            },
+            errors: {
+                404: `Document not found`,
+                409: `Document already archived`,
+            },
         });
     }
     /**
@@ -399,6 +429,30 @@ export class DocumentsService {
             },
             query: {
                 'token': token,
+            },
+        });
+    }
+    /**
+     * @returns Document
+     * @throws ApiError
+     */
+    public static unarchiveDocument({
+        id,
+    }: {
+        /**
+         * Document ID
+         */
+        id: string,
+    }): CancelablePromise<Document> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/documents/{id}/unarchive',
+            path: {
+                'id': id,
+            },
+            errors: {
+                404: `Document not found`,
+                409: `Document is not archived`,
             },
         });
     }

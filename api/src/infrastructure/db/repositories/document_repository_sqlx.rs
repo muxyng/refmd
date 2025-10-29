@@ -2,8 +2,9 @@ use async_trait::async_trait;
 use sqlx::Row;
 use uuid::Uuid;
 
-use crate::application::ports::document_repository::DocMeta;
-use crate::application::ports::document_repository::DocumentRepository;
+use crate::application::ports::document_repository::{
+    DocMeta, DocumentListState, DocumentRepository,
+};
 use crate::domain::documents::document::{
     BacklinkInfo as DomBacklinkInfo, Document as DomainDocument, OutgoingLink as DomOutgoingLink,
     SearchHit,
@@ -27,42 +28,58 @@ impl DocumentRepository for SqlxDocumentRepository {
         user_id: Uuid,
         query: Option<String>,
         tag: Option<String>,
+        state: DocumentListState,
     ) -> anyhow::Result<Vec<DomainDocument>> {
+        let archived_condition = match state {
+            DocumentListState::Active => "d.archived_at IS NULL",
+            DocumentListState::Archived => "d.archived_at IS NOT NULL",
+            DocumentListState::All => "TRUE",
+        };
+
         let rows = if let Some(t) = tag.as_ref().filter(|s| !s.trim().is_empty()) {
-            sqlx::query(
-                r#"SELECT d.id, d.title, d.parent_id, d.type, d.created_at, d.updated_at, d.path
-                           FROM document_tags dt
-                           JOIN tags t ON t.id = dt.tag_id
-                           JOIN documents d ON d.id = dt.document_id
-                           WHERE d.owner_id = $1 AND t.name ILIKE $2
-                           ORDER BY d.updated_at DESC LIMIT 100"#,
-            )
-            .bind(user_id)
-            .bind(t)
-            .fetch_all(&self.pool)
-            .await?
+            let sql = format!(
+                r#"SELECT d.id, d.title, d.parent_id, d.type, d.created_at, d.updated_at, d.path,
+                          d.archived_at, d.archived_by, d.archived_parent_id
+                   FROM document_tags dt
+                   JOIN tags t ON t.id = dt.tag_id
+                   JOIN documents d ON d.id = dt.document_id
+                   WHERE d.owner_id = $1 AND {archived_condition} AND t.name ILIKE $2
+                   ORDER BY d.updated_at DESC LIMIT 100"#,
+                archived_condition = archived_condition,
+            );
+            sqlx::query(&sql)
+                .bind(user_id)
+                .bind(t)
+                .fetch_all(&self.pool)
+                .await?
         } else if let Some(ref qq) = query.as_ref().filter(|s| !s.trim().is_empty()) {
             let like = format!("%{}%", qq);
-            sqlx::query(
-                r#"SELECT id, title, parent_id, type, created_at, updated_at, path
-                           FROM documents
-                           WHERE owner_id = $1 AND title ILIKE $2
-                           ORDER BY updated_at DESC LIMIT 100"#,
-            )
-            .bind(user_id)
-            .bind(like)
-            .fetch_all(&self.pool)
-            .await?
+            let sql = format!(
+                r#"SELECT d.id, d.title, d.parent_id, d.type, d.created_at, d.updated_at, d.path,
+                          d.archived_at, d.archived_by, d.archived_parent_id
+                   FROM documents d
+                   WHERE d.owner_id = $1 AND {archived_condition} AND d.title ILIKE $2
+                   ORDER BY d.updated_at DESC LIMIT 100"#,
+                archived_condition = archived_condition,
+            );
+            sqlx::query(&sql)
+                .bind(user_id)
+                .bind(like)
+                .fetch_all(&self.pool)
+                .await?
         } else {
-            sqlx::query(
-                r#"SELECT id, title, parent_id, type, created_at, updated_at, path
-                           FROM documents
-                           WHERE owner_id = $1
-                           ORDER BY updated_at DESC LIMIT 100"#,
-            )
-            .bind(user_id)
-            .fetch_all(&self.pool)
-            .await?
+            let sql = format!(
+                r#"SELECT d.id, d.title, d.parent_id, d.type, d.created_at, d.updated_at, d.path,
+                          d.archived_at, d.archived_by, d.archived_parent_id
+                   FROM documents d
+                   WHERE d.owner_id = $1 AND {archived_condition}
+                   ORDER BY d.updated_at DESC LIMIT 100"#,
+                archived_condition = archived_condition,
+            );
+            sqlx::query(&sql)
+                .bind(user_id)
+                .fetch_all(&self.pool)
+                .await?
         };
 
         let items = rows
@@ -75,6 +92,9 @@ impl DocumentRepository for SqlxDocumentRepository {
                 created_at: r.get("created_at"),
                 updated_at: r.get("updated_at"),
                 path: r.try_get("path").ok(),
+                archived_at: r.try_get("archived_at").ok(),
+                archived_by: r.try_get("archived_by").ok(),
+                archived_parent_id: r.try_get("archived_parent_id").ok(),
             })
             .collect();
         Ok(items)
@@ -90,7 +110,8 @@ impl DocumentRepository for SqlxDocumentRepository {
 
     async fn get_by_id(&self, id: Uuid) -> anyhow::Result<Option<DomainDocument>> {
         let row = sqlx::query(
-            r#"SELECT id, title, parent_id, type, created_at, updated_at, path
+            r#"SELECT id, title, parent_id, type, created_at, updated_at, path,
+                      archived_at, archived_by, archived_parent_id
                FROM documents WHERE id = $1"#,
         )
         .bind(id)
@@ -104,6 +125,9 @@ impl DocumentRepository for SqlxDocumentRepository {
             created_at: r.get("created_at"),
             updated_at: r.get("updated_at"),
             path: r.try_get("path").ok(),
+            archived_at: r.try_get("archived_at").ok(),
+            archived_by: r.try_get("archived_by").ok(),
+            archived_parent_id: r.try_get("archived_parent_id").ok(),
         }))
     }
 
@@ -117,8 +141,9 @@ impl DocumentRepository for SqlxDocumentRepository {
         let like = format!("%{}%", q);
         let rows = if q.trim().is_empty() {
             sqlx::query(
-                r#"SELECT id, title, type, path, updated_at
+                r#"SELECT id, title, type, path, updated_at, archived_at
                    FROM documents WHERE owner_id = $1
+                   AND archived_at IS NULL
                    ORDER BY updated_at DESC
                    LIMIT $2"#,
             )
@@ -128,8 +153,9 @@ impl DocumentRepository for SqlxDocumentRepository {
             .await?
         } else {
             sqlx::query(
-                r#"SELECT id, title, type, path, updated_at FROM documents
-                   WHERE owner_id = $1 AND (LOWER(title) LIKE LOWER($2) OR title ILIKE $2)
+                r#"SELECT id, title, type, path, updated_at, archived_at FROM documents
+                   WHERE owner_id = $1 AND archived_at IS NULL
+                     AND (LOWER(title) LIKE LOWER($2) OR title ILIKE $2)
                    ORDER BY CASE WHEN LOWER(title) = LOWER($3) THEN 0 ELSE 1 END, LENGTH(title), updated_at DESC
                    LIMIT $4"#
             )
@@ -163,7 +189,8 @@ impl DocumentRepository for SqlxDocumentRepository {
         let row = sqlx::query(
             r#"INSERT INTO documents (title, owner_id, parent_id, type, path)
                VALUES ($1, $2, $3, $4, NULL)
-               RETURNING id, title, parent_id, type, created_at, updated_at, path"#,
+               RETURNING id, title, parent_id, type, created_at, updated_at, path,
+                         archived_at, archived_by, archived_parent_id"#,
         )
         .bind(title)
         .bind(user_id)
@@ -179,6 +206,9 @@ impl DocumentRepository for SqlxDocumentRepository {
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),
             path: row.try_get("path").ok(),
+            archived_at: row.try_get("archived_at").ok(),
+            archived_by: row.try_get("archived_by").ok(),
+            archived_parent_id: row.try_get("archived_parent_id").ok(),
         })
     }
 
@@ -196,7 +226,8 @@ impl DocumentRepository for SqlxDocumentRepository {
                             title = COALESCE($1, title),
                             updated_at = now()
                         WHERE id = $2 AND owner_id = $3
-                        RETURNING id, title, parent_id, type, created_at, updated_at, path"#,
+                        RETURNING id, title, parent_id, type, created_at, updated_at, path,
+                                  archived_at, archived_by, archived_parent_id"#,
                 )
                 .bind(title)
                 .bind(id)
@@ -211,7 +242,8 @@ impl DocumentRepository for SqlxDocumentRepository {
                             parent_id = $2,
                             updated_at = now()
                         WHERE id = $3 AND owner_id = $4
-                        RETURNING id, title, parent_id, type, created_at, updated_at, path"#,
+                        RETURNING id, title, parent_id, type, created_at, updated_at, path,
+                                  archived_at, archived_by, archived_parent_id"#,
                 )
                 .bind(title)
                 .bind(newp)
@@ -229,6 +261,9 @@ impl DocumentRepository for SqlxDocumentRepository {
             created_at: r.get("created_at"),
             updated_at: r.get("updated_at"),
             path: r.try_get("path").ok(),
+            archived_at: r.try_get("archived_at").ok(),
+            archived_by: r.try_get("archived_by").ok(),
+            archived_parent_id: r.try_get("archived_parent_id").ok(),
         }))
     }
 
@@ -326,16 +361,150 @@ impl DocumentRepository for SqlxDocumentRepository {
         doc_id: Uuid,
         owner_id: Uuid,
     ) -> anyhow::Result<Option<DocMeta>> {
-        let row =
-            sqlx::query("SELECT type, path, title FROM documents WHERE id = $1 AND owner_id = $2")
-                .bind(doc_id)
-                .bind(owner_id)
-                .fetch_optional(&self.pool)
-                .await?;
+        let row = sqlx::query(
+            "SELECT type, path, title, archived_at FROM documents WHERE id = $1 AND owner_id = $2",
+        )
+        .bind(doc_id)
+        .bind(owner_id)
+        .fetch_optional(&self.pool)
+        .await?;
         Ok(row.map(|r| DocMeta {
             doc_type: r.get("type"),
             path: r.try_get("path").ok(),
             title: r.get("title"),
+            archived_at: r.try_get("archived_at").ok(),
         }))
+    }
+
+    async fn archive_subtree(
+        &self,
+        doc_id: Uuid,
+        owner_id: Uuid,
+        archived_by: Uuid,
+    ) -> anyhow::Result<Option<DomainDocument>> {
+        let mut tx = self.pool.begin().await?;
+
+        let updated = sqlx::query_scalar::<_, Uuid>(
+            r#"
+            WITH RECURSIVE subtree AS (
+                SELECT id FROM documents WHERE id = $1 AND owner_id = $2
+                UNION ALL
+                SELECT d.id
+                FROM documents d
+                JOIN subtree sb ON d.parent_id = sb.id
+                WHERE d.owner_id = $2
+            ),
+            updated AS (
+                UPDATE documents AS d
+                SET archived_at = now(),
+                    archived_by = $3,
+                    archived_parent_id = d.parent_id,
+                    parent_id = NULL,
+                    updated_at = now()
+                FROM subtree sb
+                WHERE d.id = sb.id AND d.archived_at IS NULL
+                RETURNING d.id
+            )
+            SELECT id FROM updated WHERE id = $1 LIMIT 1
+            "#,
+        )
+        .bind(doc_id)
+        .bind(owner_id)
+        .bind(archived_by)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        let root = if let Some(root_id) = updated {
+            sqlx::query(
+                r#"SELECT id, title, parent_id, type, created_at, updated_at, path,
+                          archived_at, archived_by, archived_parent_id
+                   FROM documents WHERE id = $1"#,
+            )
+            .bind(root_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .map(|r| DomainDocument {
+                id: r.get("id"),
+                title: r.get("title"),
+                parent_id: r.get("parent_id"),
+                doc_type: r.get("type"),
+                created_at: r.get("created_at"),
+                updated_at: r.get("updated_at"),
+                path: r.try_get("path").ok(),
+                archived_at: r.try_get("archived_at").ok(),
+                archived_by: r.try_get("archived_by").ok(),
+                archived_parent_id: r.try_get("archived_parent_id").ok(),
+            })
+        } else {
+            None
+        };
+
+        tx.commit().await?;
+        Ok(root)
+    }
+
+    async fn unarchive_subtree(
+        &self,
+        doc_id: Uuid,
+        owner_id: Uuid,
+    ) -> anyhow::Result<Option<DomainDocument>> {
+        let mut tx = self.pool.begin().await?;
+
+        let updated = sqlx::query_scalar::<_, Uuid>(
+            r#"
+            WITH RECURSIVE subtree AS (
+                SELECT id FROM documents WHERE id = $1 AND owner_id = $2
+                UNION ALL
+                SELECT d.id
+                FROM documents d
+                JOIN subtree sb ON d.archived_parent_id = sb.id
+                WHERE d.owner_id = $2
+            ),
+            updated AS (
+                UPDATE documents AS d
+                SET parent_id = archived_parent_id,
+                    archived_parent_id = NULL,
+                    archived_at = NULL,
+                    archived_by = NULL,
+                    updated_at = now()
+                FROM subtree sb
+                WHERE d.id = sb.id AND d.archived_at IS NOT NULL
+                RETURNING d.id
+            )
+            SELECT id FROM updated WHERE id = $1 LIMIT 1
+            "#,
+        )
+        .bind(doc_id)
+        .bind(owner_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        let root = if let Some(root_id) = updated {
+            sqlx::query(
+                r#"SELECT id, title, parent_id, type, created_at, updated_at, path,
+                          archived_at, archived_by, archived_parent_id
+                   FROM documents WHERE id = $1"#,
+            )
+            .bind(root_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .map(|r| DomainDocument {
+                id: r.get("id"),
+                title: r.get("title"),
+                parent_id: r.get("parent_id"),
+                doc_type: r.get("type"),
+                created_at: r.get("created_at"),
+                updated_at: r.get("updated_at"),
+                path: r.try_get("path").ok(),
+                archived_at: r.try_get("archived_at").ok(),
+                archived_by: r.try_get("archived_by").ok(),
+                archived_parent_id: r.try_get("archived_parent_id").ok(),
+            })
+        } else {
+            None
+        };
+
+        tx.commit().await?;
+        Ok(root)
     }
 }

@@ -6,6 +6,19 @@ use crate::domain::documents::document::{
     BacklinkInfo as DomBacklinkInfo, OutgoingLink as DomOutgoingLink, SearchHit,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DocumentListState {
+    Active,
+    Archived,
+    All,
+}
+
+impl Default for DocumentListState {
+    fn default() -> Self {
+        DocumentListState::Active
+    }
+}
+
 #[async_trait]
 pub trait DocumentRepository: Send + Sync {
     async fn list_for_user(
@@ -13,6 +26,7 @@ pub trait DocumentRepository: Send + Sync {
         user_id: Uuid,
         query: Option<String>,
         tag: Option<String>,
+        state: DocumentListState,
     ) -> anyhow::Result<Vec<DomainDocument>>;
 
     async fn list_ids_for_user(&self, user_id: Uuid) -> anyhow::Result<Vec<Uuid>>;
@@ -64,6 +78,19 @@ pub trait DocumentRepository: Send + Sync {
         doc_id: Uuid,
         owner_id: Uuid,
     ) -> anyhow::Result<Option<DocMeta>>;
+
+    async fn archive_subtree(
+        &self,
+        doc_id: Uuid,
+        owner_id: Uuid,
+        archived_by: Uuid,
+    ) -> anyhow::Result<Option<DomainDocument>>;
+
+    async fn unarchive_subtree(
+        &self,
+        doc_id: Uuid,
+        owner_id: Uuid,
+    ) -> anyhow::Result<Option<DomainDocument>>;
 }
 
 #[derive(Debug, Clone)]
@@ -71,4 +98,5 @@ pub struct DocMeta {
     pub doc_type: String,
     pub path: Option<String>,
     pub title: String,
+    pub archived_at: Option<chrono::DateTime<chrono::Utc>>,
 }

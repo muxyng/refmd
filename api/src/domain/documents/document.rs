@@ -9,6 +9,9 @@ pub struct Document {
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
     pub path: Option<String>,
+    pub archived_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub archived_by: Option<Uuid>,
+    pub archived_parent_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone)]

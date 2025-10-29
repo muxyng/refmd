@@ -1,5 +1,5 @@
 import { Link, useRouter, useRouterState } from '@tanstack/react-router'
-import { Blocks, Eye, FileText, Github, LogOut, Settings, Users } from 'lucide-react'
+import { Archive, Blocks, Eye, FileText, Github, LogOut, Settings, Users, ChevronDown, ChevronRight } from 'lucide-react'
 import React, { useCallback, useEffect, useState } from 'react'
 
 import { overlayMenuClass, overlayPanelClass } from '@/shared/lib/overlay-classes'
@@ -103,11 +103,27 @@ function FileTreeInner() {
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   const { user } = useAuthContext()
   const router = useRouter()
-  const { documents, expandedFolders, loading, shareToken, toggleFolder, expandFolder, refreshDocuments, updateDocuments, requestRename } = useFileTree()
+  const {
+    documents,
+    archivedDocuments,
+    archivesExpanded,
+    setArchivesExpanded,
+    expandedFolders,
+    loading,
+    shareToken,
+    toggleFolder,
+    expandFolder,
+    refreshDocuments,
+    updateDocuments,
+    requestRename,
+  } = useFileTree()
   const isShare = shareToken.length > 0
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null)
   const [docPickerOpen, setDocPickerOpen] = useState(false)
   const docPickerPromiseRef = React.useRef<((value: string | null) => void) | null>(null)
+  const hasActiveDocuments = documents.length > 0
+  const hasArchivedDocuments = archivedDocuments.length > 0
+  const handleToggleArchives = useCallback(() => setArchivesExpanded((prev) => !prev), [setArchivesExpanded])
   const isDescendant = useCallback((ancestorId: string, nodeId: string): boolean => {
     const stack: DocumentNode[] = []
     const pushChildren = (id: string) => {
@@ -307,7 +323,7 @@ function FileTreeInner() {
                     </SidebarMenuItem>
                   ))}
                 </SidebarMenu>
-              ) : documents.length === 0 ? (
+              ) : !hasActiveDocuments && !hasArchivedDocuments ? (
                 <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-border/60 bg-background/40 px-4 py-12 text-center text-xs text-muted-foreground">
                   No documents yet. Start by creating a new note or folder.
                 </div>
@@ -319,6 +335,44 @@ function FileTreeInner() {
             </SidebarGroupContent>
           </SidebarGroup>
         </SidebarContent>
+
+        {!isShare && (
+          <SidebarFooter className="border-t border-border/40 px-4 py-3">
+            <div className="flex flex-col gap-2">
+              <Button
+                variant="ghost"
+                className={cn(
+                  'flex w-full items-center justify-between rounded-xl border border-border/30 bg-background/80 px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground',
+                  !hasArchivedDocuments && 'opacity-60'
+                )}
+                onClick={handleToggleArchives}
+                disabled={!hasArchivedDocuments}
+              >
+                <span className="flex items-center gap-2 text-left">
+                  <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-muted/40 text-muted-foreground">
+                    <Archive className="h-3.5 w-3.5" />
+                  </span>
+                  <span>Archives</span>
+                </span>
+                <span className="flex items-center gap-2">
+                  <span className="rounded-full bg-muted/50 px-2 py-0.5 text-[10px] font-semibold tracking-[0.18em] text-muted-foreground">
+                    {archivedDocuments.length}
+                  </span>
+                  <span className="flex h-5 w-5 items-center justify-center text-muted-foreground">
+                    {archivesExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                  </span>
+                </span>
+              </Button>
+              {archivesExpanded && hasArchivedDocuments && (
+                <div className="max-h-80 space-y-1.5 overflow-y-auto pr-1">
+                  {archivedDocuments.map((n) => (
+                    <div key={n.id}>{renderNode(n)}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </SidebarFooter>
+        )}
       </div>
 
       {!isShare && (

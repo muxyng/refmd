@@ -10,7 +10,9 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::application::access;
+use crate::application::ports::document_repository::DocumentListState;
 use crate::application::ports::document_snapshot_archive_repository::SnapshotArchiveRecord;
+use crate::application::use_cases::documents::archive_document::ArchiveDocument;
 use crate::application::use_cases::documents::create_document::CreateDocument;
 use crate::application::use_cases::documents::delete_document::DeleteDocument;
 use crate::application::use_cases::documents::download_document::DownloadDocument as DownloadDocumentUseCase;
@@ -25,6 +27,7 @@ use crate::application::use_cases::documents::snapshot_diff::{
     SnapshotDiff, SnapshotDiffBase, SnapshotDiffBaseMode,
 };
 use crate::application::use_cases::documents::snapshot_download::DownloadSnapshot;
+use crate::application::use_cases::documents::unarchive_document::UnarchiveDocument;
 use crate::application::use_cases::documents::update_document::UpdateDocument;
 use crate::bootstrap::app_context::AppContext;
 use crate::domain::documents::document as domain;
@@ -40,6 +43,24 @@ pub struct Document {
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
     pub path: Option<String>,
+    pub archived_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub archived_by: Option<Uuid>,
+    pub archived_parent_id: Option<Uuid>,
+}
+
+fn to_http_document(doc: domain::Document) -> Document {
+    Document {
+        id: doc.id,
+        title: doc.title,
+        parent_id: doc.parent_id,
+        r#type: doc.doc_type,
+        created_at: doc.created_at,
+        updated_at: doc.updated_at,
+        path: doc.path,
+        archived_at: doc.archived_at,
+        archived_by: doc.archived_by,
+        archived_parent_id: doc.archived_parent_id,
+    }
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -184,12 +205,33 @@ impl<T> Default for DoubleOption<T> {
 pub struct ListDocumentsQuery {
     pub query: Option<String>,
     pub tag: Option<String>,
+    #[serde(default)]
+    pub state: Option<DocumentStateFilter>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DocumentStateFilter {
+    Active,
+    Archived,
+    All,
+}
+
+impl From<DocumentStateFilter> for DocumentListState {
+    fn from(value: DocumentStateFilter) -> Self {
+        match value {
+            DocumentStateFilter::Active => DocumentListState::Active,
+            DocumentStateFilter::Archived => DocumentListState::Archived,
+            DocumentStateFilter::All => DocumentListState::All,
+        }
+    }
 }
 
 #[utoipa::path(get, path = "/api/documents", tag = "Documents",
     params(
         ("query" = Option<String>, Query, description = "Search query"),
-        ("tag" = Option<String>, Query, description = "Filter by tag")
+        ("tag" = Option<String>, Query, description = "Filter by tag"),
+        ("state" = Option<String>, Query, description = "Filter by document state (active|archived|all)")
     ),
     responses((status = 200, body = DocumentListResponse)))]
 pub async fn list_documents(
@@ -199,29 +241,23 @@ pub async fn list_documents(
 ) -> Result<Json<DocumentListResponse>, StatusCode> {
     let sub = crate::presentation::http::auth::validate_bearer_public(&ctx.cfg, bearer)?;
     let user_id = Uuid::parse_str(&sub).map_err(|_| StatusCode::UNAUTHORIZED)?;
-    let (qstr, tag) = q.map(|Query(v)| (v.query, v.tag)).unwrap_or((None, None));
+    let (qstr, tag, state_param) = q
+        .map(|Query(v)| (v.query, v.tag, v.state))
+        .unwrap_or((None, None, None));
+    let state = state_param
+        .map(DocumentStateFilter::into)
+        .unwrap_or_default();
 
     let repo = ctx.document_repo();
     let uc = ListDocuments {
         repo: repo.as_ref(),
     };
     let docs: Vec<domain::Document> = uc
-        .execute(user_id, qstr, tag)
+        .execute(user_id, qstr, tag, state)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let items: Vec<Document> = docs
-        .into_iter()
-        .map(|d| Document {
-            id: d.id,
-            title: d.title,
-            parent_id: d.parent_id,
-            r#type: d.doc_type,
-            created_at: d.created_at,
-            updated_at: d.updated_at,
-            path: d.path,
-        })
-        .collect();
+    let items: Vec<Document> = docs.into_iter().map(to_http_document).collect();
     Ok(Json(DocumentListResponse { items }))
 }
 
@@ -245,15 +281,7 @@ pub async fn create_document(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    Ok(Json(Document {
-        id: doc.id,
-        title: doc.title,
-        parent_id: doc.parent_id,
-        r#type: doc.doc_type,
-        created_at: doc.created_at,
-        updated_at: doc.updated_at,
-        path: doc.path,
-    }))
+    Ok(Json(to_http_document(doc)))
 }
 
 #[utoipa::path(get, path = "/api/documents/{id}", tag = "Documents",
@@ -283,15 +311,7 @@ pub async fn get_document(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    Ok(Json(Document {
-        id: doc.id,
-        title: doc.title,
-        parent_id: doc.parent_id,
-        r#type: doc.doc_type,
-        created_at: doc.created_at,
-        updated_at: doc.updated_at,
-        path: doc.path,
-    }))
+    Ok(Json(to_http_document(doc)))
 }
 
 #[utoipa::path(delete, path = "/api/documents/{id}", tag = "Documents", params(("id" = Uuid, Path, description = "Document ID"),), responses((status = 204)))]
@@ -426,6 +446,14 @@ pub async fn update_document(
     let sub = crate::presentation::http::auth::validate_bearer_public(&ctx.cfg, bearer)?;
     let user_id = Uuid::parse_str(&sub).map_err(|_| StatusCode::UNAUTHORIZED)?;
     let repo = ctx.document_repo();
+    let meta = repo
+        .get_meta_for_owner(id, user_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    if meta.archived_at.is_some() {
+        return Err(StatusCode::CONFLICT);
+    }
     let storage = ctx.storage_port();
     let realtime = ctx.realtime_engine();
     let uc = UpdateDocument {
@@ -443,15 +471,91 @@ pub async fn update_document(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    Ok(Json(Document {
-        id: doc.id,
-        title: doc.title,
-        parent_id: doc.parent_id,
-        r#type: doc.doc_type,
-        created_at: doc.created_at,
-        updated_at: doc.updated_at,
-        path: doc.path,
-    }))
+    Ok(Json(to_http_document(doc)))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/documents/{id}/archive",
+    tag = "Documents",
+    params(("id" = Uuid, Path, description = "Document ID")),
+    responses(
+        (status = 200, body = Document),
+        (status = 404, description = "Document not found"),
+        (status = 409, description = "Document already archived")
+    )
+)]
+pub async fn archive_document(
+    State(ctx): State<AppContext>,
+    bearer: Bearer,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Document>, StatusCode> {
+    let sub = crate::presentation::http::auth::validate_bearer_public(&ctx.cfg, bearer)?;
+    let user_id = Uuid::parse_str(&sub).map_err(|_| StatusCode::UNAUTHORIZED)?;
+    let repo = ctx.document_repo();
+    let meta = repo
+        .get_meta_for_owner(id, user_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    if meta.archived_at.is_some() {
+        return Err(StatusCode::CONFLICT);
+    }
+
+    let shares = ctx.shares_repo();
+    let realtime = ctx.realtime_engine();
+    let uc = ArchiveDocument {
+        repo: repo.as_ref(),
+        shares: shares.as_ref(),
+        realtime: realtime.as_ref(),
+    };
+    let doc = uc
+        .execute(user_id, id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(to_http_document(doc)))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/documents/{id}/unarchive",
+    tag = "Documents",
+    params(("id" = Uuid, Path, description = "Document ID")),
+    responses(
+        (status = 200, body = Document),
+        (status = 404, description = "Document not found"),
+        (status = 409, description = "Document is not archived")
+    )
+)]
+pub async fn unarchive_document(
+    State(ctx): State<AppContext>,
+    bearer: Bearer,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Document>, StatusCode> {
+    let sub = crate::presentation::http::auth::validate_bearer_public(&ctx.cfg, bearer)?;
+    let user_id = Uuid::parse_str(&sub).map_err(|_| StatusCode::UNAUTHORIZED)?;
+    let repo = ctx.document_repo();
+    let meta = repo
+        .get_meta_for_owner(id, user_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    if meta.archived_at.is_none() {
+        return Err(StatusCode::CONFLICT);
+    }
+
+    let realtime = ctx.realtime_engine();
+    let uc = UnarchiveDocument {
+        repo: repo.as_ref(),
+        realtime: realtime.as_ref(),
+    };
+    let doc = uc
+        .execute(user_id, id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(to_http_document(doc)))
 }
 
 #[utoipa::path(
@@ -688,6 +792,8 @@ pub fn routes(ctx: AppContext) -> Router {
                 .patch(update_document),
         )
         .route("/documents/:id/content", get(get_document_content))
+        .route("/documents/:id/archive", post(archive_document))
+        .route("/documents/:id/unarchive", post(unarchive_document))
         .route("/documents/:id/snapshots", get(list_document_snapshots))
         .route(
             "/documents/:id/snapshots/:snapshot_id/diff",

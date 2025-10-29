@@ -26,7 +26,7 @@ export default function EditorPane({ theme, readOnly, onMount, onDropFiles, isMo
         const files = Array.from(e.dataTransfer?.files || [])
         setIsDragging(false)
         dragCounterRef.current = 0
-        if (!readOnly && files.length > 0) { try { await onDropFiles?.(files as File[]) } catch {} }
+        if (files.length > 0) { try { await onDropFiles?.(files as File[]) } catch {} }
       }}
     >
       <Editor

@@ -20,6 +20,8 @@ use utoipa::OpenApi;
         documents::update_document,
         documents::delete_document,
         documents::get_document_content,
+        documents::archive_document,
+        documents::unarchive_document,
         documents::download_document,
         documents::list_document_snapshots,
         documents::get_document_snapshot_diff,

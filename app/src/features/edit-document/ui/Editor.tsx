@@ -2,8 +2,10 @@ import type { OnMount } from '@monaco-editor/react'
 import { useNavigate } from '@tanstack/react-router'
 import type * as monacoNs from 'monaco-editor'
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import type { Awareness } from 'y-protocols/awareness'
 import * as Y from 'yjs'
+
 
 import { useTheme } from '@/shared/contexts/theme-context'
 import { useIsMobile } from '@/shared/hooks/use-mobile'
@@ -65,6 +67,14 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
   const [isVimMode, setIsVimMode] = useState<boolean>(() => typeof window !== 'undefined' && localStorage.getItem('editorVimMode') === 'true')
   const [syncScroll, setSyncScroll] = useState<boolean>(true)
   const [toolbarOpen, setToolbarOpen] = useState(false)
+  const readOnlyWarningRef = useRef(0)
+  const emitReadOnlyWarning = useCallback(() => {
+    if (!readOnly) return
+    const now = Date.now()
+    if (now - readOnlyWarningRef.current < 1500) return
+    readOnlyWarningRef.current = now
+    toast.info('Document is read-only')
+  }, [readOnly])
   const syncScrollRef = useRef<boolean>(true)
   useEffect(() => { syncScrollRef.current = syncScroll }, [syncScroll])
   const vimModeRef = useRef<{ dispose: () => void } | null>(null)
@@ -97,14 +107,48 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
 
   useAwarenessStyles(awareness, { userId, userName })
 
-  const { uploadFiles } = useEditorUploads(documentId, readOnly)
+  const { uploadFiles } = useEditorUploads(documentId, readOnly, emitReadOnlyWarning)
   const uploadFilesRef = useRef(uploadFiles)
   useEffect(() => {
     uploadFilesRef.current = uploadFiles
   }, [uploadFiles])
 
+  const setReadOnlyOverlay = useCallback(
+    (
+      editor: (monacoNs.editor.IStandaloneCodeEditor & { __readOnlyOverlay?: { widget: monacoNs.editor.IOverlayWidget; domNode: HTMLElement }; __monaco?: typeof monacoNs }) | undefined,
+      monacoInstance: typeof monacoNs | undefined,
+      enabled: boolean,
+    ) => {
+      if (!editor || !monacoInstance) return
+      const existing = editor.__readOnlyOverlay
+      if (enabled) {
+        if (existing) return
+        const domNode = document.createElement('div')
+        domNode.className = 'pointer-events-none select-none text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground bg-background/85 border border-border/60 rounded-full px-3 py-1 shadow-sm'
+        domNode.textContent = 'Read-only'
+        const widget: monacoNs.editor.IOverlayWidget = {
+          getId: () => 'read-only-overlay',
+          getDomNode: () => domNode,
+          getPosition: () => ({
+            preference: monacoInstance.editor.OverlayWidgetPositionPreference.TOP_RIGHT_CORNER,
+          }),
+        }
+        editor.addOverlayWidget(widget)
+        editor.__readOnlyOverlay = { widget, domNode }
+      } else if (existing) {
+        try { editor.removeOverlayWidget(existing.widget) } catch {}
+        try { existing.domNode.remove() } catch {}
+        delete editor.__readOnlyOverlay
+      }
+    },
+    [],
+  )
+
   const handleTaskToggle = useCallback((lineNumber: number, checked: boolean) => {
-    if (readOnly) return
+    if (readOnly) {
+      emitReadOnlyWarning()
+      return
+    }
     if (!Number.isInteger(lineNumber) || lineNumber < 1) return
     const ytext = doc.getText('content')
     const text = ytext.toString()
@@ -132,11 +176,13 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
       y.delete(offset, lineText.length)
       y.insert(offset, newLine)
     })
-  }, [doc, readOnly])
+  }, [doc, readOnly, emitReadOnlyWarning])
 
   const handleMount: OnMount = useCallback((editor, monaco) => {
     // First, bind Monaco to Yjs via hook
     onMonacoMount(editor, monaco)
+    ;(editor as any).__monaco = monaco
+    setReadOnlyOverlay(editor as any, monaco as any, readOnly)
     // Register wiki-link completion provider
     try {
       const disp = registerWikiLinkCompletion(monaco as any)
@@ -160,10 +206,28 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
     const cursorDispose = editor.onDidChangeCursorSelection((_e) => {})
     ;(editor as any).__disposeCursor = () => safeExecute('dispose cursor listener', () => cursorDispose.dispose())
 
+    const shouldWarnForKey = (ev: any) => {
+      if (!readOnly) return false
+      const native = ev?.browserEvent ?? ev
+      if (!native) return false
+      const { ctrlKey, metaKey, altKey } = native
+      if (ctrlKey || metaKey || altKey) return false
+      const key = native.key ?? native.code ?? ''
+      if (key === ' ' || key === 'Spacebar') return true
+      const editingKeys = ['Backspace', 'Delete', 'Enter', 'Tab']
+      if (editingKeys.includes(key)) return true
+      if (typeof key === 'string' && key.length === 1) return true
+      return false
+    }
+
     // Pre-lock preview to bottom when user hits Enter at file end
     try {
       const keydownDispose = editor.onKeyDown((e: any) => {
         try {
+          if (shouldWarnForKey(e)) {
+            emitReadOnlyWarning()
+            return
+          }
           const KeyCode = (monaco as any)?.KeyCode
           const isEnter = KeyCode ? e.keyCode === KeyCode.Enter : e.code === 'Enter' || e.keyCode === 13
           if (!isEnter) return
@@ -257,10 +321,17 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
         }
       })()
     }
-  }, [onMonacoMount, isVimMode, syncScroll, view, handleEditorScroll])
+  }, [onMonacoMount, isVimMode, syncScroll, handleEditorScroll, emitReadOnlyWarning, readOnly, setReadOnlyOverlay])
+
+  useEffect(() => {
+    const editorInstance = editorRef.current as (monacoNs.editor.IStandaloneCodeEditor & { __readOnlyOverlay?: { widget: monacoNs.editor.IOverlayWidget; domNode: HTMLElement }; __monaco?: typeof monacoNs }) | null
+    if (!editorInstance) return
+    const monacoInstance = editorInstance.__monaco
+    setReadOnlyOverlay(editorInstance, monacoInstance, readOnly)
+  }, [readOnly, setReadOnlyOverlay])
 
   useEffect(() => () => {
-    const anyEditor = editorRef.current as monacoNs.editor.IStandaloneCodeEditor | undefined
+    const anyEditor = editorRef.current as (monacoNs.editor.IStandaloneCodeEditor & { __readOnlyOverlay?: { widget: monacoNs.editor.IOverlayWidget; domNode: HTMLElement }; __monaco?: typeof monacoNs }) | undefined
     safeExecute('dispose change listener', () => (anyEditor as any)?.__disposeChange?.())
     safeExecute('dispose scroll listener', () => (anyEditor as any)?.__disposeScroll?.())
     safeExecute('dispose paste handler', () => (anyEditor as any)?.__disposePaste?.())
@@ -268,6 +339,16 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
     safeExecute('dispose cursor handler', () => (anyEditor as any)?.__disposeCursor?.())
     safeExecute('dispose monaco markdown handler', () => (anyEditor as any)?.__disposeMonacoMd?.())
     safeExecute('dispose keydown handler', () => (anyEditor as any)?.__disposeKeydown?.())
+    safeExecute('dispose read-only overlay', () => {
+      if (anyEditor?.__readOnlyOverlay) {
+        try { anyEditor.removeOverlayWidget(anyEditor.__readOnlyOverlay.widget) } catch {}
+        try { anyEditor.__readOnlyOverlay.domNode.remove() } catch {}
+        delete anyEditor.__readOnlyOverlay
+      }
+      if (anyEditor && '__monaco' in anyEditor) {
+        delete (anyEditor as any).__monaco
+      }
+    })
     safeExecute('dispose vim mode', () => {
       if (vimModeRef.current) {
         vimModeRef.current.dispose()
@@ -314,8 +395,12 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
   }, [isVimMode])
 
   const handleFileUpload = useCallback(() => {
+    if (readOnly) {
+      emitReadOnlyWarning()
+      return
+    }
     if (fileInputRef.current) fileInputRef.current.click()
-  }, [])
+  }, [emitReadOnlyWarning, readOnly])
 
   // uploadFiles provided by hook
 
@@ -400,10 +485,9 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
 
   const handleEditorDropFiles = useCallback(
     async (files: File[]) => {
-      if (readOnly) return
       await uploadFiles(files)
     },
-    [readOnly, uploadFiles],
+    [uploadFiles],
   )
 
   
@@ -417,7 +501,7 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
         className="hidden"
         onChange={async (e) => {
           const files = Array.from(e.currentTarget.files || [])
-          if (!readOnly) await uploadFiles(files)
+          await uploadFiles(files)
           safeExecute('reset file input', () => {
             e.currentTarget.value = ''
           })

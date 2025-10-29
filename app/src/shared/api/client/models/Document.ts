@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 export type Document = {
+    archived_at?: string | null;
+    archived_by?: string | null;
+    archived_parent_id?: string | null;
     created_at: string;
     id: string;
     parent_id?: string | null;

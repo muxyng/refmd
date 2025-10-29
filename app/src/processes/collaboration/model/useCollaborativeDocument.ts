@@ -12,31 +12,79 @@ import { useRealtime } from '@/processes/collaboration/contexts/realtime-context
 export type RealtimeStatus = 'connecting' | 'connected' | 'disconnected'
 
 export function useCollaborativeDocument(id: string, shareToken?: string) {
-  const rt = useRealtime()
+  const {
+    setDocumentId: setRealtimeDocumentId,
+    setDocumentTitle,
+    setDocumentStatus,
+    setDocumentBadge,
+    setDocumentActions,
+    setDocumentPath,
+    setShowEditorFeatures,
+    setConnected,
+    setUserCount,
+    setOnlineUsers,
+    userCount,
+  } = useRealtime()
   const [status, setStatus] = React.useState<RealtimeStatus>('connecting')
   const [isReadOnly, setIsReadOnly] = React.useState(false)
+  const [archived, setArchived] = React.useState(false)
+  const [shareReadOnly, setShareReadOnly] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const connectionRef = React.useRef<YjsConnection | null>(null)
 
   // Validate share token and set readonly. Also set documentId early for attachments.
   React.useEffect(() => {
-    rt.setDocumentId(id)
+    setRealtimeDocumentId(id)
     const token = resolveShareToken(shareToken)
     if (!token) {
-      setIsReadOnly(false)
+      setShareReadOnly(false)
       return
     }
 
     ;(async () => {
       try {
         const info = await validateShareToken(token)
-        setIsReadOnly(info?.permission !== 'edit')
+        setShareReadOnly(info?.permission !== 'edit')
       } catch {
         toast.error('Invalid or expired share link')
-        setIsReadOnly(true)
+        setShareReadOnly(true)
       }
     })()
   }, [id, shareToken])
+
+  React.useEffect(() => {
+    setIsReadOnly(shareReadOnly || archived)
+  }, [shareReadOnly, archived])
+
+  const loadMeta = React.useCallback(async () => {
+    try {
+      const token = resolveShareToken(shareToken)
+      const meta = await fetchDocumentMeta(id, token ?? undefined)
+      if (meta) {
+        const isDocArchived = Boolean(meta.archived_at)
+        setArchived(isDocArchived)
+        setDocumentTitle(meta.title)
+        setDocumentStatus(isDocArchived ? 'Archived document' : undefined)
+        setDocumentBadge(isDocArchived ? 'Archived' : undefined)
+        setDocumentActions([])
+        setDocumentPath(undefined)
+        setRealtimeDocumentId(id)
+        setShowEditorFeatures(true)
+      }
+    } catch {
+      /* ignore meta load failures */
+    }
+  }, [
+    id,
+    shareToken,
+    setDocumentTitle,
+    setDocumentStatus,
+    setDocumentBadge,
+    setDocumentActions,
+    setDocumentPath,
+    setRealtimeDocumentId,
+    setShowEditorFeatures,
+  ])
 
   React.useEffect(() => {
     setStatus('connecting')
@@ -67,18 +115,18 @@ export function useCollaborativeDocument(id: string, shareToken?: string) {
           provider.connect()
         } else {
           setStatus('disconnected')
-          rt.setConnected(false)
+          setConnected(false)
           lastStatus = 'disconnected'
         }
 
         onStatus = (ev: { status: string }) => {
           if (ev.status === 'connected') {
             setStatus('connected')
-            rt.setConnected(true)
+            setConnected(true)
             lastStatus = 'connected'
           } else if (ev.status === 'disconnected') {
             setStatus('disconnected')
-            rt.setConnected(false)
+            setConnected(false)
             const shouldNotify = typeof navigator === 'undefined' ? true : navigator.onLine
             if (shouldNotify && lastStatus !== 'disconnected') toast.error('Disconnected from realtime server')
             lastStatus = 'disconnected'
@@ -104,14 +152,14 @@ export function useCollaborativeDocument(id: string, shareToken?: string) {
             provider.disconnect()
           } catch {}
           setStatus('disconnected')
-          rt.setConnected(false)
+          setConnected(false)
           lastStatus = 'disconnected'
         }
 
         window.addEventListener('online', onOnline)
         window.addEventListener('offline', onOffline)
 
-        const prevCountRef = { current: rt.userCount }
+        const prevCountRef = { current: userCount }
         const lastIdsRef = { current: new Set<string>() }
         onAwareness = () => {
           const states = provider.awareness.getStates() as Map<number, any>
@@ -131,7 +179,7 @@ export function useCollaborativeDocument(id: string, shareToken?: string) {
           const uniqueCount = list.length
           if (uniqueCount !== prevCountRef.current) {
             prevCountRef.current = uniqueCount
-            rt.setUserCount(uniqueCount)
+            setUserCount(uniqueCount)
           }
           const ids = new Set(list.map((u) => u.id))
           let changed = ids.size !== lastIdsRef.current.size
@@ -145,29 +193,17 @@ export function useCollaborativeDocument(id: string, shareToken?: string) {
           }
           if (changed) {
             lastIdsRef.current = ids
-            rt.setOnlineUsers(list)
+            setOnlineUsers(list)
           }
         }
         provider.awareness.on('update', onAwareness)
 
-        try {
-          const meta = await fetchDocumentMeta(id, urlShareToken ?? undefined)
-          if (meta) {
-            rt.setDocumentTitle(meta.title)
-            rt.setDocumentStatus(undefined)
-            rt.setDocumentBadge(undefined)
-            rt.setDocumentActions([])
-            rt.setDocumentPath(undefined)
-            rt.setDocumentId(id)
-            rt.setShowEditorFeatures(true)
-          }
-        } catch {
-        }
+        await loadMeta()
       } catch (err) {
         console.error('[collaboration] failed to initialise realtime session', id, err)
         setStatus('disconnected')
         setError('Failed to establish realtime connection. Please reload.')
-        rt.setConnected(false)
+        setConnected(false)
         destroyYjsConnection(connectionRef.current)
         connectionRef.current = null
       }
@@ -192,18 +228,35 @@ export function useCollaborativeDocument(id: string, shareToken?: string) {
       }
       destroyYjsConnection(connectionRef.current)
       connectionRef.current = null
-      rt.setShowEditorFeatures(false)
-      rt.setUserCount(0)
-      rt.setOnlineUsers([])
-      rt.setConnected(false)
-      rt.setDocumentTitle(undefined)
-      rt.setDocumentStatus(undefined)
-      rt.setDocumentBadge(undefined)
-      rt.setDocumentActions([])
-      rt.setDocumentPath(undefined)
+      setShowEditorFeatures(false)
+      setUserCount(0)
+      setOnlineUsers([])
+      setConnected(false)
+      setDocumentTitle(undefined)
+      setDocumentStatus(undefined)
+      setDocumentBadge(undefined)
+      setDocumentActions([])
+      setDocumentPath(undefined)
+      setArchived(false)
+      setShareReadOnly(false)
+      setIsReadOnly(false)
       setError(null)
     }
-  }, [id, shareToken])
+  }, [id, shareToken, loadMeta])
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ id?: string }>).detail
+      if (detail?.id === id) {
+        void loadMeta()
+      }
+    }
+    window.addEventListener('refmd:document-archive-change', handler as EventListener)
+    return () => {
+      window.removeEventListener('refmd:document-archive-change', handler as EventListener)
+    }
+  }, [id, loadMeta])
 
   return {
     status,
@@ -212,6 +265,7 @@ export function useCollaborativeDocument(id: string, shareToken?: string) {
     doc: connectionRef.current?.doc ?? null,
     awareness: connectionRef.current?.provider.awareness ?? null,
     error,
+    archived,
   }
 }
 
