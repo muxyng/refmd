@@ -779,6 +779,7 @@ impl GitWorkspacePort for GitWorkspaceService {
         let branch_name = cfg
             .map(|c| c.branch_name.clone())
             .unwrap_or(default_branch.clone());
+        let force_push = req.force.unwrap_or(false);
         if !initialized {
             tx.rollback().await.ok();
             anyhow::bail!("repository not initialized")
@@ -861,6 +862,7 @@ impl GitWorkspacePort for GitWorkspaceService {
                         cfg,
                         branch_name.as_str(),
                         latest_meta.as_ref(),
+                        force_push,
                     )?;
                 }
             }
@@ -944,7 +946,7 @@ impl GitWorkspacePort for GitWorkspaceService {
             let mut pushed = false;
             if let Some(cfg) = cfg {
                 if !cfg.repository_url.is_empty() {
-                    pushed = perform_push(&repo, cfg, &branch_name, commit_oid)?;
+                    pushed = perform_push(&repo, cfg, &branch_name, commit_oid, force_push)?;
                 }
             }
 
@@ -1187,6 +1189,7 @@ fn fetch_remote_and_verify(
     cfg: &UserGitCfg,
     branch: &str,
     latest_meta: Option<&CommitMeta>,
+    allow_divergence: bool,
 ) -> anyhow::Result<()> {
     if cfg.repository_url.is_empty() {
         return Ok(());
@@ -1195,18 +1198,34 @@ fn fetch_remote_and_verify(
     match (latest_meta, remote_head) {
         (Some(meta), Some(oid)) => {
             if oid.as_bytes() != meta.commit_id.as_slice() {
-                anyhow::bail!(
-                    "remote repository state diverged: remote head {} does not match latest recorded commit {}",
-                    oid.to_string(),
-                    encode_commit_id(&meta.commit_id)
-                );
+                if allow_divergence {
+                    let local_hex = encode_commit_id(meta.commit_id.as_slice());
+                    warn!(
+                        remote_head = %oid,
+                        local_head = %local_hex,
+                        "remote repository diverged; proceeding due to force flag"
+                    );
+                } else {
+                    anyhow::bail!(
+                        "remote repository state diverged: remote head {} does not match latest recorded commit {}",
+                        oid.to_string(),
+                        encode_commit_id(&meta.commit_id)
+                    );
+                }
             }
         }
         (None, Some(oid)) => {
-            anyhow::bail!(
-                "remote repository already contains commit {} but local repository has no history",
-                oid.to_string()
-            );
+            if allow_divergence {
+                warn!(
+                    remote_head = %oid,
+                    "remote repository has existing history; proceeding due to force flag"
+                );
+            } else {
+                anyhow::bail!(
+                    "remote repository already contains commit {} but local repository has no history",
+                    oid.to_string()
+                );
+            }
         }
         _ => {}
     }
@@ -1240,6 +1259,7 @@ fn perform_push(
     cfg: &UserGitCfg,
     branch: &str,
     commit_oid: git2::Oid,
+    force: bool,
 ) -> anyhow::Result<bool> {
     let ref_name = format!("refs/heads/{}", branch);
     repo.reference(&ref_name, commit_oid, true, "update branch for sync")?;
@@ -1248,7 +1268,11 @@ fn perform_push(
     let callbacks = build_remote_callbacks(cfg);
     let mut push_options = PushOptions::new();
     push_options.remote_callbacks(callbacks);
-    let refspec = format!("refs/heads/{}:refs/heads/{}", branch, cfg.branch_name);
+    let refspec = if force {
+        format!("+refs/heads/{}:refs/heads/{}", branch, cfg.branch_name)
+    } else {
+        format!("refs/heads/{}:refs/heads/{}", branch, cfg.branch_name)
+    };
     remote.push(&[&refspec], Some(&mut push_options))?;
     Ok(true)
 }
