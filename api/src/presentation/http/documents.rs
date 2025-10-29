@@ -533,9 +533,11 @@ pub async fn archive_document(
     }
 
     let realtime = ctx.realtime_engine();
+    let storage = ctx.storage_port();
     let uc = ArchiveDocument {
         repo: repo.as_ref(),
         realtime: realtime.as_ref(),
+        storage: storage.as_ref(),
     };
     let doc = uc
         .execute(user_id, id)
