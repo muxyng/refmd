@@ -337,7 +337,7 @@ function FileTreeInner() {
         </SidebarContent>
 
         {!isShare && (
-          <SidebarFooter className="border-t border-border/40 px-4 py-3">
+          <SidebarFooter className="px-4 py-3">
             <div className="flex flex-col gap-2">
               <Button
                 variant="ghost"
