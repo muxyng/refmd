@@ -25,7 +25,7 @@ type SnapshotHistoryDialogProps = {
 }
 
 export function SnapshotHistoryDialog({ documentId, open, onOpenChange, token, canRestore = false }: SnapshotHistoryDialogProps) {
-  const { data, isLoading, error } = useDocumentSnapshots(documentId, { token })
+  const { data, isLoading, isFetching, error } = useDocumentSnapshots(documentId, { token })
   const snapshots = data?.items ?? []
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<'unified' | 'split'>('unified')
@@ -36,14 +36,24 @@ export function SnapshotHistoryDialog({ documentId, open, onOpenChange, token, c
     if (!open) {
       return
     }
-    if (!selectedId && snapshots.length > 0) {
+
+    if (snapshots.length === 0) {
+      if (selectedId !== null) {
+        setSelectedId(null)
+      }
+      return
+    }
+
+    if (!selectedId) {
       setSelectedId(snapshots[0].id)
       return
     }
-    if (selectedId && snapshots.every((snap) => snap.id !== selectedId) && snapshots.length > 0) {
+
+    const hasSelected = snapshots.some((snapshot) => snapshot.id === selectedId)
+    if (!hasSelected && !isFetching) {
       setSelectedId(snapshots[0].id)
     }
-  }, [open, snapshots, selectedId])
+  }, [open, snapshots, selectedId, isFetching])
 
   const selectedSnapshotId = selectedId ?? snapshots[0]?.id
 
