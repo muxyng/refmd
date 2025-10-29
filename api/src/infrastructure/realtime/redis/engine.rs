@@ -521,7 +521,7 @@ fn spawn_persistence_worker(
                                             if let Err(e) = snapshot_service
                                                 .archive_snapshot(
                                                     &doc_uuid,
-                                                    &hydrated.doc,
+                                                    &result.snapshot_bytes,
                                                     result.version,
                                                     SnapshotArchiveOptions {
                                                         label: label.as_str(),

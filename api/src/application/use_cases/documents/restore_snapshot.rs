@@ -64,7 +64,7 @@ where
             .snapshots
             .archive_snapshot(
                 &document_id,
-                &snapshot_doc,
+                &persist_result.snapshot_bytes,
                 persist_result.version,
                 SnapshotArchiveOptions {
                     label: label.as_str(),

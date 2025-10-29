@@ -45,6 +45,7 @@ impl Default for SnapshotPersistOptions {
 
 pub struct SnapshotPersistResult {
     pub version: i64,
+    pub snapshot_bytes: Vec<u8>,
 }
 
 pub struct MarkdownPersistResult {
@@ -128,6 +129,7 @@ impl SnapshotService {
         }
         Ok(SnapshotPersistResult {
             version: next_version,
+            snapshot_bytes: snapshot_bin,
         })
     }
 
@@ -185,22 +187,18 @@ impl SnapshotService {
     pub async fn archive_snapshot(
         &self,
         doc_id: &Uuid,
-        doc: &Doc,
+        snapshot_bin: &[u8],
         version: i64,
         options: SnapshotArchiveOptions<'_>,
     ) -> anyhow::Result<SnapshotArchiveRecord> {
-        let snapshot_bin = {
-            let txn = doc.transact();
-            txn.encode_state_as_update_v1(&StateVector::default())
-        };
         let byte_size = snapshot_bin.len() as i64;
-        let hash = sha256_hex(&snapshot_bin);
+        let hash = sha256_hex(snapshot_bin);
         let record = self
             .archive_repo
             .insert(SnapshotArchiveInsert {
                 document_id: doc_id,
                 version,
-                snapshot: &snapshot_bin,
+                snapshot: snapshot_bin,
                 label: options.label,
                 notes: options.notes,
                 kind: options.kind.as_str(),

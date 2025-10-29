@@ -177,7 +177,7 @@ impl Hub {
                                 if let Err(e) = snapshot_service
                                     .archive_snapshot(
                                         &persist_doc,
-                                        &doc_for_snap,
+                                        &result.snapshot_bytes,
                                         result.version,
                                         SnapshotArchiveOptions {
                                             label: label.as_str(),
@@ -365,13 +365,22 @@ impl Hub {
     }
 
     pub async fn get_content(&self, doc_id: &str) -> anyhow::Result<Option<String>> {
-        let map = self.inner.read().await;
-        let room = match map.get(doc_id) {
-            Some(room) => room.clone(),
-            None => return Ok(None),
+        if let Some(room) = self.inner.read().await.get(doc_id).cloned() {
+            let txt = room.doc.get_or_insert_text("content");
+            let txn = room.doc.transact();
+            return Ok(Some(txt.get_string(&txn)));
+        }
+
+        let uuid = match Uuid::parse_str(doc_id) {
+            Ok(id) => id,
+            Err(_) => return Ok(None),
         };
-        let txt = room.doc.get_or_insert_text("content");
-        let txn = room.doc.transact();
+        let hydrated = self
+            .hydration_service
+            .hydrate(&uuid, HydrationOptions::default())
+            .await?;
+        let txt = hydrated.doc.get_or_insert_text("content");
+        let txn = hydrated.doc.transact();
         Ok(Some(txt.get_string(&txn)))
     }
 }
