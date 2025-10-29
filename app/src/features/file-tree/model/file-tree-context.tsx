@@ -48,11 +48,36 @@ type DbDoc = {
 
 type BuildTreeOptions = {
   useArchivedParent?: boolean
+  fallbackInfo?: Map<string, { id: string; title: string; type: DocumentNode['type']; parent_id?: string | null }>
 }
 
 function buildTree(docs: DbDoc[], options?: BuildTreeOptions): DocumentNode[] {
   const useArchivedParent = options?.useArchivedParent ?? false
+  const fallbackInfo = options?.fallbackInfo
   const nodeMap = new Map<string, DocumentNode>()
+  const parentRef = new Map<string, string | undefined>()
+
+  const ensurePlaceholder = (id: string | undefined) => {
+    if (!id || nodeMap.has(id)) return
+    const info = fallbackInfo?.get(id)
+    if (!info || info.type !== 'folder') return
+    const placeholder: DocumentNode = {
+      id: info.id,
+      title: info.title,
+      type: 'folder',
+      children: [],
+      archived: true,
+    }
+    nodeMap.set(id, placeholder)
+    const parentId = (useArchivedParent ? info.parent_id ?? undefined : info.parent_id ?? undefined) || undefined
+    if (parentId === id) {
+      parentRef.set(id, undefined)
+      return
+    }
+    parentRef.set(id, parentId)
+    if (parentId) ensurePlaceholder(parentId)
+  }
+
   docs.forEach((d) => {
     const type: DocumentNode['type'] = d.type === 'folder' ? 'folder' : 'file'
     nodeMap.set(d.id, {
@@ -64,22 +89,27 @@ function buildTree(docs: DbDoc[], options?: BuildTreeOptions): DocumentNode[] {
       updated_at: d.updated_at,
       archived: Boolean(d.archived_at),
     })
-  })
-  const roots: DocumentNode[] = []
-  docs.forEach((d) => {
-    const node = nodeMap.get(d.id)!
-    let pid = (useArchivedParent ? d.archived_parent_id : d.parent_id) ?? undefined
-    if (useArchivedParent && pid && !nodeMap.has(pid)) {
-      pid = undefined
+    const parentId = (useArchivedParent ? d.archived_parent_id : d.parent_id) ?? undefined
+    parentRef.set(d.id, parentId ?? undefined)
+    if (useArchivedParent && parentId && !nodeMap.has(parentId)) {
+      ensurePlaceholder(parentId)
     }
-    if (pid && nodeMap.has(pid)) {
-      const parent = nodeMap.get(pid)!
-      parent.children!.push(node)
+  })
+
+  const roots: DocumentNode[] = []
+  nodeMap.forEach((node, id) => {
+    node.children = node.children ?? []
+    const parentId = parentRef.get(id)
+    if (parentId && nodeMap.has(parentId) && parentId !== id) {
+      const parent = nodeMap.get(parentId)!
+      parent.children = parent.children ?? []
+      if (!parent.children!.includes(node)) parent.children!.push(node)
       if (parent.type === 'file') parent.type = 'folder'
     } else {
       roots.push(node)
     }
   })
+
   const sortTree = (nodes: DocumentNode[]): DocumentNode[] => {
     nodes.sort((a, b) => {
       if (a.type !== b.type) {
@@ -176,17 +206,34 @@ export function FileTreeProvider({ children }: { children: React.ReactNode }) {
     gcTime: 10 * 60 * 1000,
   })
 
-  const { data: archivedDocumentsUser = [], isLoading: isLoadingArchived } = useQuery({
+  const activeDocumentInfo = useMemo(() => {
+    if (isShare) return new Map<string, { id: string; title: string; type: DocumentNode['type']; parent_id?: string | null }>()
+    const map = new Map<string, { id: string; title: string; type: DocumentNode['type']; parent_id?: string | null }>()
+    const collect = (nodes: DocumentNode[], parentId: string | null) => {
+      for (const node of nodes) {
+        map.set(node.id, { id: node.id, title: node.title, type: node.type, parent_id: parentId })
+        if (node.children && node.children.length) collect(node.children, node.id)
+      }
+    }
+    collect(documentsUser, null)
+    return map
+  }, [documentsUser, isShare])
+
+  const { data: archivedDocumentsRaw = [], isLoading: isLoadingArchived } = useQuery({
     queryKey: ['documents', userId, 'archived'],
     enabled: !!userId && !isShare,
     queryFn: async () => {
       const res = await listDocuments({ state: 'archived' })
-      const items = (res.items ?? []) as unknown as DbDoc[]
-      return buildTree(items, { useArchivedParent: true })
+      return (res.items ?? []) as unknown as DbDoc[]
     },
     staleTime: 5 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
   })
+
+  const archivedDocumentsUser = useMemo(
+    () => buildTree(archivedDocumentsRaw, { useArchivedParent: true, fallbackInfo: activeDocumentInfo }),
+    [archivedDocumentsRaw, activeDocumentInfo],
+  )
 
   const { data: documentsShare = [], isLoading: isLoadingShare } = useQuery({
     queryKey: ['share-documents', shareToken],
@@ -210,6 +257,24 @@ export function FileTreeProvider({ children }: { children: React.ReactNode }) {
   const docs = isShare ? documentsShare : documentsUser
   const archivedDocs = isShare ? [] : archivedDocumentsUser
   const loading = isShare ? isLoadingShare : isLoadingUser || isLoadingArchived
+
+  useEffect(() => {
+    if (!archivesExpanded || !archivedDocs.length) return
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      const stack: DocumentNode[] = [...archivedDocs]
+      while (stack.length) {
+        const node = stack.pop()!
+        if (node.type === 'folder') {
+          next.add(node.id)
+        }
+        if (node.children && node.children.length) {
+          stack.push(...node.children)
+        }
+      }
+      return next
+    })
+  }, [archivesExpanded, archivedDocs])
 
   type ActiveShareItem = {
     document_id: string
