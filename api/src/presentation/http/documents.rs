@@ -271,8 +271,23 @@ pub async fn create_document(
     let user_id = Uuid::parse_str(&sub).map_err(|_| StatusCode::UNAUTHORIZED)?;
     let title = req.title.unwrap_or_else(|| "Untitled".into());
     let dtype = req.r#type.unwrap_or_else(|| "document".into());
-
     let repo = ctx.document_repo();
+
+    if let Some(parent_id) = req.parent_id {
+        let parent_meta = repo
+            .get_meta_for_owner(parent_id, user_id)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        match parent_meta {
+            Some(meta) => {
+                if meta.archived_at.is_some() {
+                    return Err(StatusCode::CONFLICT);
+                }
+            }
+            None => return Err(StatusCode::NOT_FOUND),
+        }
+    }
+
     let uc = CreateDocument {
         repo: repo.as_ref(),
     };
@@ -454,6 +469,21 @@ pub async fn update_document(
     if meta.archived_at.is_some() {
         return Err(StatusCode::CONFLICT);
     }
+
+    if let DoubleOption::Some(new_parent_id) = &req.parent_id {
+        let parent_meta = repo
+            .get_meta_for_owner(*new_parent_id, user_id)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        match parent_meta {
+            Some(parent) => {
+                if parent.archived_at.is_some() {
+                    return Err(StatusCode::CONFLICT);
+                }
+            }
+            None => return Err(StatusCode::NOT_FOUND),
+        }
+    }
     let storage = ctx.storage_port();
     let realtime = ctx.realtime_engine();
     let uc = UpdateDocument {
@@ -502,11 +532,9 @@ pub async fn archive_document(
         return Err(StatusCode::CONFLICT);
     }
 
-    let shares = ctx.shares_repo();
     let realtime = ctx.realtime_engine();
     let uc = ArchiveDocument {
         repo: repo.as_ref(),
-        shares: shares.as_ref(),
         realtime: realtime.as_ref(),
     };
     let doc = uc

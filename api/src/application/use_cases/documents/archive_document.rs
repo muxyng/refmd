@@ -2,24 +2,20 @@ use uuid::Uuid;
 
 use crate::application::ports::document_repository::DocumentRepository;
 use crate::application::ports::realtime_port::RealtimeEngine;
-use crate::application::ports::shares_repository::SharesRepository;
 use crate::domain::documents::document::Document as DomainDocument;
 
-pub struct ArchiveDocument<'a, R, S, RT>
+pub struct ArchiveDocument<'a, R, RT>
 where
     R: DocumentRepository + ?Sized,
-    S: SharesRepository + ?Sized,
     RT: RealtimeEngine + ?Sized,
 {
     pub repo: &'a R,
-    pub shares: &'a S,
     pub realtime: &'a RT,
 }
 
-impl<'a, R, S, RT> ArchiveDocument<'a, R, S, RT>
+impl<'a, R, RT> ArchiveDocument<'a, R, RT>
 where
     R: DocumentRepository + ?Sized,
-    S: SharesRepository + ?Sized,
     RT: RealtimeEngine + ?Sized,
 {
     pub async fn execute(
@@ -35,15 +31,29 @@ where
             return Ok(None);
         }
 
-        // Save latest real-time state on a best-effort basis before archiving
-        let _ = self.realtime.force_persist(&doc_id.to_string()).await;
-
-        self.shares.revoke_subtree_shares(owner_id, doc_id).await?;
+        let subtree = self
+            .repo
+            .list_owned_subtree_documents(owner_id, doc_id)
+            .await?;
+        for node in &subtree {
+            if node.doc_type != "folder" {
+                self.realtime.force_persist(&node.id.to_string()).await?;
+            }
+        }
 
         let doc = self
             .repo
             .archive_subtree(doc_id, owner_id, owner_id)
             .await?;
+
+        if doc.is_some() {
+            for node in &subtree {
+                self.realtime
+                    .set_document_editable(&node.id.to_string(), false)
+                    .await?;
+            }
+        }
+
         Ok(doc)
     }
 }

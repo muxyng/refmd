@@ -91,6 +91,12 @@ pub trait DocumentRepository: Send + Sync {
         doc_id: Uuid,
         owner_id: Uuid,
     ) -> anyhow::Result<Option<DomainDocument>>;
+
+    async fn list_owned_subtree_documents(
+        &self,
+        owner_id: Uuid,
+        root_id: Uuid,
+    ) -> anyhow::Result<Vec<SubtreeDocument>>;
 }
 
 #[derive(Debug, Clone)]
@@ -99,4 +105,10 @@ pub struct DocMeta {
     pub path: Option<String>,
     pub title: String,
     pub archived_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SubtreeDocument {
+    pub id: Uuid,
+    pub doc_type: String,
 }

@@ -43,4 +43,8 @@ pub trait RealtimeEngine: Send + Sync {
     }
 
     async fn apply_snapshot(&self, doc_id: &str, doc: &Doc) -> anyhow::Result<()>;
+
+    async fn set_document_editable(&self, _doc_id: &str, _editable: bool) -> anyhow::Result<()> {
+        Ok(())
+    }
 }

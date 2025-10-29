@@ -31,10 +31,24 @@ where
             return Ok(None);
         }
 
+        let subtree = self
+            .repo
+            .list_owned_subtree_documents(owner_id, doc_id)
+            .await?;
+
         let doc = self.repo.unarchive_subtree(doc_id, owner_id).await?;
 
         if doc.is_some() {
-            let _ = self.realtime.force_persist(&doc_id.to_string()).await;
+            for node in &subtree {
+                self.realtime
+                    .set_document_editable(&node.id.to_string(), true)
+                    .await?;
+            }
+            for node in &subtree {
+                if node.doc_type != "folder" {
+                    self.realtime.force_persist(&node.id.to_string()).await?;
+                }
+            }
         }
 
         Ok(doc)

@@ -3,7 +3,7 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use crate::application::ports::document_repository::{
-    DocMeta, DocumentListState, DocumentRepository,
+    DocMeta, DocumentListState, DocumentRepository, SubtreeDocument,
 };
 use crate::domain::documents::document::{
     BacklinkInfo as DomBacklinkInfo, Document as DomainDocument, OutgoingLink as DomOutgoingLink,
@@ -394,6 +394,13 @@ impl DocumentRepository for SqlxDocumentRepository {
                 JOIN subtree sb ON d.parent_id = sb.id
                 WHERE d.owner_id = $2
             ),
+            removed_shares AS (
+                DELETE FROM shares s
+                USING subtree sb
+                WHERE s.document_id = sb.id
+                  AND s.created_by = $2
+                RETURNING 1
+            ),
             updated AS (
                 UPDATE documents AS d
                 SET archived_at = now(),
@@ -506,5 +513,36 @@ impl DocumentRepository for SqlxDocumentRepository {
 
         tx.commit().await?;
         Ok(root)
+    }
+
+    async fn list_owned_subtree_documents(
+        &self,
+        owner_id: Uuid,
+        root_id: Uuid,
+    ) -> anyhow::Result<Vec<SubtreeDocument>> {
+        let rows = sqlx::query(
+            r#"
+            WITH RECURSIVE subtree AS (
+                SELECT id, type FROM documents WHERE id = $1 AND owner_id = $2
+                UNION ALL
+                SELECT d.id, d.type
+                FROM documents d
+                JOIN subtree sb ON d.parent_id = sb.id
+                WHERE d.owner_id = $2
+            )
+            SELECT id, type FROM subtree
+            "#,
+        )
+        .bind(root_id)
+        .bind(owner_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| SubtreeDocument {
+                id: r.get("id"),
+                doc_type: r.get("type"),
+            })
+            .collect())
     }
 }
