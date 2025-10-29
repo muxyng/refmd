@@ -527,7 +527,7 @@ impl DocumentRepository for SqlxDocumentRepository {
                 UNION ALL
                 SELECT d.id, d.type
                 FROM documents d
-                JOIN subtree sb ON d.parent_id = sb.id
+                JOIN subtree sb ON COALESCE(d.parent_id, d.archived_parent_id) = sb.id
                 WHERE d.owner_id = $2
             )
             SELECT id, type FROM subtree
