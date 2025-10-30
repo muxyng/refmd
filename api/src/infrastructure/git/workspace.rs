@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 use futures_util::StreamExt;
 use git2::{
     CertificateCheckStatus, Commit, Cred, FetchOptions, FileMode, Indexer, ObjectType, PushOptions,
-    RemoteCallbacks, Repository, Signature, Time, TreeWalkMode, TreeWalkResult,
+    RemoteCallbacks, Repository, Signature, Sort, Time, TreeWalkMode, TreeWalkResult,
 };
 use sqlx::{Row, types::Json};
 use tempfile::{Builder as TempDirBuilder, TempDir};
@@ -139,6 +139,227 @@ impl GitWorkspaceService {
         self.backfill_commits_from_storage(user_id, &storage_latest)
             .await?;
         Ok(Some(storage_latest))
+    }
+
+    async fn bootstrap_remote_history(
+        &self,
+        user_id: Uuid,
+        cfg: &UserGitCfg,
+        branch: &str,
+    ) -> anyhow::Result<Option<CommitMeta>> {
+        let temp_dir = TempDirBuilder::new()
+            .prefix("git-bootstrap-")
+            .tempdir()
+            .map_err(|e| anyhow!(e))?;
+        let repo = Repository::init_bare(temp_dir.path())?;
+
+        let Some(remote_head) = fetch_remote_head(&repo, cfg, branch)? else {
+            return Ok(None);
+        };
+
+        let ordered = {
+            let mut revwalk = repo.revwalk()?;
+            revwalk.push(remote_head)?;
+            revwalk.set_sorting(Sort::TOPOLOGICAL | Sort::REVERSE)?;
+
+            let mut collected = Vec::new();
+            for oid_result in revwalk {
+                collected.push(oid_result?);
+            }
+            collected
+        };
+
+        if ordered.is_empty() {
+            return Ok(None);
+        }
+
+        let mut latest_meta = self.git_storage.latest_commit(user_id).await?;
+
+        for oid in ordered {
+            if self
+                .commit_meta_by_id(user_id, oid.as_bytes())
+                .await?
+                .is_some()
+            {
+                continue;
+            }
+
+            let (meta, snapshots, pack_bytes) = {
+                let commit = repo.find_commit(oid)?;
+                let committed_at = git_time_to_datetime(commit.time())?;
+                let message = commit
+                    .message()
+                    .map(|m| m.trim_end_matches('\n').to_string())
+                    .filter(|m| !m.trim().is_empty());
+                let author = commit.author();
+                let author_name = author.name().map(|s| s.to_string());
+                let author_email = author.email().map(|s| s.to_string());
+                let parent_commit_id = if commit.parent_count() > 0 {
+                    let parent = commit.parent_id(0)?;
+                    Some(parent.as_bytes().to_vec())
+                } else {
+                    None
+                };
+
+                let files = read_commit_files(&repo, oid.as_bytes())?;
+                let mut snapshots: HashMap<String, FileSnapshot> = HashMap::new();
+                let mut file_hash_index: HashMap<String, String> = HashMap::new();
+                for (path, bytes) in files.into_iter() {
+                    let hash = sha256_hex(&bytes);
+                    let is_text = std::str::from_utf8(&bytes).is_ok();
+                    file_hash_index.insert(path.clone(), hash.clone());
+                    snapshots.insert(
+                        path,
+                        FileSnapshot {
+                            hash,
+                            data: FileSnapshotData::Inline(bytes),
+                            is_text,
+                        },
+                    );
+                }
+
+                let mut pack_builder = repo.packbuilder()?;
+                pack_builder.insert_commit(oid)?;
+                let mut pack_buf = git2::Buf::new();
+                pack_builder.write_buf(&mut pack_buf)?;
+                let pack_bytes = pack_buf.to_vec();
+                drop(pack_builder);
+
+                let commit_id = oid.as_bytes().to_vec();
+                let pack_key = format!(
+                    "git/packs/{}/{}.pack",
+                    user_id,
+                    encode_commit_id(&commit_id)
+                );
+
+                let meta = CommitMeta {
+                    commit_id,
+                    parent_commit_id,
+                    message,
+                    author_name,
+                    author_email,
+                    committed_at,
+                    pack_key,
+                    file_hash_index,
+                };
+
+                (meta, snapshots, pack_bytes)
+            };
+
+            let prev_latest = latest_meta.clone();
+            let snapshot_keys = match self
+                .store_commit_snapshots(user_id, &meta.commit_id, &snapshots)
+                .await
+            {
+                Ok(keys) => keys,
+                Err(err) => {
+                    return Err(err);
+                }
+            };
+
+            if let Err(err) = self
+                .git_storage
+                .store_pack(user_id, &pack_bytes, &meta)
+                .await
+            {
+                for key in snapshot_keys.iter().rev() {
+                    let _ = self.git_storage.delete_blob(key).await;
+                }
+                return Err(err);
+            }
+
+            if let Err(err) = self
+                .git_storage
+                .set_latest_commit(user_id, Some(&meta))
+                .await
+            {
+                let _ = self.git_storage.delete_pack(user_id, &meta.commit_id).await;
+                for key in snapshot_keys.iter().rev() {
+                    let _ = self.git_storage.delete_blob(key).await;
+                }
+                let _ = self
+                    .git_storage
+                    .set_latest_commit(user_id, prev_latest.as_ref())
+                    .await;
+                return Err(err);
+            }
+
+            let mut tx = self.pool.begin().await?;
+            let insert_res = sqlx::query(
+                r#"INSERT INTO git_commits (
+                        commit_id,
+                        parent_commit_id,
+                        user_id,
+                        message,
+                        author_name,
+                        author_email,
+                        committed_at,
+                        pack_key,
+                        file_hash_index
+                    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+                    ON CONFLICT (commit_id) DO NOTHING"#,
+            )
+            .bind(meta.commit_id.clone())
+            .bind(meta.parent_commit_id.clone())
+            .bind(user_id)
+            .bind(meta.message.clone())
+            .bind(meta.author_name.clone())
+            .bind(meta.author_email.clone())
+            .bind(meta.committed_at)
+            .bind(meta.pack_key.clone())
+            .bind(Json(&meta.file_hash_index))
+            .execute(&mut *tx)
+            .await;
+
+            if let Err(err) = insert_res {
+                tx.rollback().await.ok();
+                let _ = self.git_storage.delete_pack(user_id, &meta.commit_id).await;
+                for key in snapshot_keys.iter().rev() {
+                    let _ = self.git_storage.delete_blob(key).await;
+                }
+                let _ = self
+                    .git_storage
+                    .set_latest_commit(user_id, prev_latest.as_ref())
+                    .await;
+                return Err(err.into());
+            }
+
+            if let Err(err) =
+                sqlx::query("UPDATE git_repository_state SET updated_at = now() WHERE user_id = $1")
+                    .bind(user_id)
+                    .execute(&mut *tx)
+                    .await
+            {
+                tx.rollback().await.ok();
+                let _ = self.git_storage.delete_pack(user_id, &meta.commit_id).await;
+                for key in snapshot_keys.iter().rev() {
+                    let _ = self.git_storage.delete_blob(key).await;
+                }
+                let _ = self
+                    .git_storage
+                    .set_latest_commit(user_id, prev_latest.as_ref())
+                    .await;
+                return Err(err.into());
+            }
+
+            if let Err(err) = tx.commit().await {
+                let _ = self.git_storage.delete_pack(user_id, &meta.commit_id).await;
+                for key in snapshot_keys.iter().rev() {
+                    let _ = self.git_storage.delete_blob(key).await;
+                }
+                let _ = self
+                    .git_storage
+                    .set_latest_commit(user_id, prev_latest.as_ref())
+                    .await;
+                return Err(err.into());
+            }
+
+            latest_meta = Some(meta);
+        }
+
+        drop(repo);
+        let _ = temp_dir.close();
+        self.git_storage.latest_commit(user_id).await
     }
 
     async fn backfill_commits_from_storage(
@@ -763,6 +984,29 @@ impl GitWorkspacePort for GitWorkspaceService {
         req: &GitSyncRequestDto,
         cfg: Option<&UserGitCfg>,
     ) -> anyhow::Result<GitSyncOutcome> {
+        let state = self.load_repository_state(user_id).await?;
+        let Some((state_initialized, state_default_branch)) = state else {
+            anyhow::bail!("repository not initialized")
+        };
+        if !state_initialized {
+            anyhow::bail!("repository not initialized")
+        }
+
+        let branch_hint = cfg
+            .map(|c| c.branch_name.clone())
+            .unwrap_or(state_default_branch.clone());
+
+        let mut latest_meta = self.ensure_latest_meta(user_id).await?;
+        if latest_meta.is_none() {
+            if let Some(cfg) = cfg {
+                if !cfg.repository_url.is_empty() {
+                    let _ = self
+                        .bootstrap_remote_history(user_id, cfg, branch_hint.as_str())
+                        .await?;
+                }
+            }
+        }
+
         let mut tx = self.pool.begin().await?;
         let repo_row = sqlx::query(
             "SELECT initialized, default_branch FROM git_repository_state WHERE user_id = $1 FOR UPDATE",
@@ -785,7 +1029,7 @@ impl GitWorkspacePort for GitWorkspaceService {
             anyhow::bail!("repository not initialized")
         }
 
-        let latest_meta = self.ensure_latest_meta(user_id).await?;
+        latest_meta = self.ensure_latest_meta(user_id).await?;
 
         let storage_latest = self.git_storage.latest_commit(user_id).await?;
         let storage_commit_hex = storage_latest
@@ -1299,6 +1543,11 @@ fn signature_from_parts(
 ) -> anyhow::Result<Signature<'static>> {
     let git_time = Time::new(at.timestamp(), 0);
     Signature::new(name, email, &git_time).map_err(anyhow::Error::from)
+}
+
+fn git_time_to_datetime(time: Time) -> anyhow::Result<DateTime<Utc>> {
+    DateTime::<Utc>::from_timestamp(time.seconds(), 0)
+        .ok_or_else(|| anyhow!("invalid git timestamp"))
 }
 
 #[derive(Default)]
