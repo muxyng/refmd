@@ -36,7 +36,7 @@ import { Input } from '@/shared/ui/input'
 import { SidebarMenuItem, SidebarMenuButton } from '@/shared/ui/sidebar'
 
 import { useArchiveDocument, useUnarchiveDocument } from '@/entities/document'
-import { GitService } from '@/entities/git'
+import { ignoreDocument } from '@/entities/git'
 import { getPluginKv } from '@/entities/plugin'
 
 import { useFileTree, type DocumentNode } from '@/features/file-tree'
@@ -443,7 +443,7 @@ export const FileNode = memo(function FileNode({
                 <DropdownMenuItem
                   onSelect={(event) => guardMenuAction(event, async () => {
                     try {
-                      const r = await GitService.ignoreDocument({ id: node.id })
+                      const r = await ignoreDocument({ id: node.id })
                       const added = (r as any).added ?? 0
                       toast.success(`Ignored in Git (${added} pattern${added === 1 ? '' : 's'})`)
                     } catch (e: any) {

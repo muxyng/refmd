@@ -1,6 +1,22 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
-import { DocumentsService } from '@/shared/api'
+import {
+  archiveDocument as apiArchiveDocument,
+  createDocument as apiCreateDocument,
+  deleteDocument as apiDeleteDocument,
+  downloadDocument as apiDownloadDocument,
+  downloadDocumentSnapshot as apiDownloadDocumentSnapshot,
+  getBacklinks as apiGetBacklinks,
+  getDocument as apiGetDocument,
+  getDocumentContent as apiGetDocumentContent,
+  getDocumentSnapshotDiff as apiGetDocumentSnapshotDiff,
+  getOutgoingLinks as apiGetOutgoingLinks,
+  listDocumentSnapshots as apiListDocumentSnapshots,
+  listDocuments as apiListDocuments,
+  restoreDocumentSnapshot as apiRestoreDocumentSnapshot,
+  unarchiveDocument as apiUnarchiveDocument,
+  updateDocument as apiUpdateDocument,
+} from '@/shared/api'
 import type {
   DocumentListResponse,
   Document as ApiDocument,
@@ -35,7 +51,7 @@ export const listDocumentsQuery = (params?: { query?: string; tag?: string; stat
   return {
     queryKey: documentKeys.list(finalParams),
     queryFn: () =>
-      DocumentsService.listDocuments({
+      apiListDocuments({
         query: params?.query ?? null,
         tag: params?.tag ?? null,
         state,
@@ -45,13 +61,13 @@ export const listDocumentsQuery = (params?: { query?: string; tag?: string; stat
 
 export const backlinksQuery = (id: string) => ({
   queryKey: documentKeys.backlinks(id),
-  queryFn: () => DocumentsService.getBacklinks({ id }) as Promise<BacklinksResponse>,
+  queryFn: () => apiGetBacklinks({ id }) as Promise<BacklinksResponse>,
   enabled: !!id,
 })
 
 export const outgoingLinksQuery = (id: string) => ({
   queryKey: documentKeys.links(id),
-  queryFn: () => DocumentsService.getOutgoingLinks({ id }) as Promise<OutgoingLinksResponse>,
+  queryFn: () => apiGetOutgoingLinks({ id }) as Promise<OutgoingLinksResponse>,
   enabled: !!id,
 })
 
@@ -66,7 +82,7 @@ export function useOutgoingLinks(id: string) {
 export const documentSnapshotsQuery = (id: string, params?: { token?: string | null }) => ({
   queryKey: documentKeys.snapshots(id),
   queryFn: () =>
-    DocumentsService.listDocumentSnapshots({
+    apiListDocumentSnapshots({
       id,
       token: params?.token ?? null,
       limit: null,
@@ -91,7 +107,7 @@ export const snapshotDiffQuery = (
     params?.base ?? 'auto'
   ),
   queryFn: () =>
-    DocumentsService.getDocumentSnapshotDiff({
+    apiGetDocumentSnapshotDiff({
       id,
       snapshotId,
       compare: params?.compare ?? null,
@@ -105,7 +121,7 @@ export async function triggerSnapshotRestore(params: {
   snapshotId: string
   token?: string | null
 }): Promise<SnapshotSummary> {
-  const response = (await DocumentsService.restoreDocumentSnapshot({
+  const response = (await apiRestoreDocumentSnapshot({
     id: params.documentId,
     snapshotId: params.snapshotId,
     token: params.token ?? null,
@@ -119,7 +135,7 @@ export async function downloadSnapshot(params: {
   token?: string | null
   filename?: string
 }) {
-  const blob = (await DocumentsService.downloadDocumentSnapshot({
+  const blob = (await apiDownloadDocumentSnapshot({
     id: params.documentId,
     snapshotId: params.snapshotId,
     token: params.token ?? null,
@@ -144,7 +160,7 @@ export function useCreateDocument() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (input: { title?: string; parent_id?: string | null; type?: 'folder' | 'document' }) =>
-      DocumentsService.createDocument({
+      apiCreateDocument({
         requestBody: {
           title: input.title ?? 'Untitled',
           parent_id: input.parent_id ?? null,
@@ -160,7 +176,7 @@ export function useCreateDocument() {
 export function useArchiveDocument(options?: { onSuccess?: (document: ApiDocument, id: string) => void }) {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (id: string) => DocumentsService.archiveDocument({ id }) as Promise<ApiDocument>,
+    mutationFn: async (id: string) => apiArchiveDocument({ id }) as Promise<ApiDocument>,
     onSuccess: (doc, id) => {
       qc.invalidateQueries({ queryKey: documentKeys.all })
       options?.onSuccess?.(doc, id)
@@ -171,7 +187,7 @@ export function useArchiveDocument(options?: { onSuccess?: (document: ApiDocumen
 export function useUnarchiveDocument(options?: { onSuccess?: (document: ApiDocument, id: string) => void }) {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (id: string) => DocumentsService.unarchiveDocument({ id }) as Promise<ApiDocument>,
+    mutationFn: async (id: string) => apiUnarchiveDocument({ id }) as Promise<ApiDocument>,
     onSuccess: (doc, id) => {
       qc.invalidateQueries({ queryKey: documentKeys.all })
       options?.onSuccess?.(doc, id)
@@ -180,19 +196,18 @@ export function useUnarchiveDocument(options?: { onSuccess?: (document: ApiDocum
 }
 
 export type Document = ApiDocument
-export { DocumentsService }
 
 // Use-case oriented helpers
 export async function fetchDocumentMeta(id: string, token?: string) {
-  return DocumentsService.getDocument({ id, token: token ?? undefined })
+  return apiGetDocument({ id, token: token ?? undefined })
 }
 
 export async function fetchDocumentContent(id: string) {
-  return DocumentsService.getDocumentContent({ id })
+  return apiGetDocumentContent({ id })
 }
 
 export async function listDocuments(params?: { query?: string | null; tag?: string | null; state?: 'active' | 'archived' | 'all' }) {
-  return DocumentsService.listDocuments({
+  return apiListDocuments({
     query: params?.query ?? null,
     tag: params?.tag ?? null,
     state: params?.state ?? 'active',
@@ -200,23 +215,23 @@ export async function listDocuments(params?: { query?: string | null; tag?: stri
 }
 
 export async function createDocument(input: { title?: string; parent_id?: string | null; type?: 'folder' | 'document' }) {
-  return DocumentsService.createDocument({ requestBody: input as any })
+  return apiCreateDocument({ requestBody: input as any })
 }
 
 export async function updateDocumentTitle(id: string, title: string) {
-  return DocumentsService.updateDocument({ id, requestBody: { title } as any })
+  return apiUpdateDocument({ id, requestBody: { title } as any })
 }
 
 export async function updateDocumentParent(id: string, parent_id: string | null) {
-  return DocumentsService.updateDocument({ id, requestBody: { parent_id } as any })
+  return apiUpdateDocument({ id, requestBody: { parent_id } as any })
 }
 
 export async function deleteDocument(id: string) {
-  return DocumentsService.deleteDocument({ id })
+  return apiDeleteDocument({ id })
 }
 
 export async function downloadDocumentArchive(id: string, options?: { token?: string; title?: string }) {
-  const blob = await DocumentsService.downloadDocument({ id, token: options?.token ?? null })
+  const blob = await apiDownloadDocument({ id, token: options?.token ?? null })
   const filename = `${sanitizeExportName(options?.title)}.zip`
   const blobUrl = URL.createObjectURL(blob)
   try {

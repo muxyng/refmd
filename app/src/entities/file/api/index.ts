@@ -1,13 +1,11 @@
-import { FilesService } from '@/shared/api'
+import { uploadFile as apiUploadFile } from '@/shared/api'
 
 export const fileKeys = {
   all: ['files'] as const,
 }
 
-export { FilesService }
-
 export async function uploadAttachment(documentId: string, file: File) {
-  return FilesService.uploadFile({
+  return apiUploadFile({
     formData: { file: file as any, document_id: documentId } as any,
   })
 }

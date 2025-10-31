@@ -15,7 +15,7 @@ import { SidebarMenuItem, SidebarMenuButton, SidebarMenuSub } from '@/shared/ui/
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip'
 
 import { useArchiveDocument, useUnarchiveDocument } from '@/entities/document'
-import { GitService } from '@/entities/git'
+import { ignoreFolder } from '@/entities/git'
 
 import { useFileTree, type DocumentNode } from '@/features/file-tree'
 import { ShareDialog } from '@/features/sharing'
@@ -307,7 +307,7 @@ export const FolderNode = memo(function FolderNode({
                   )}
                   <DropdownMenuItem onSelect={(event) => guardMenuAction(event, async () => {
                     try {
-                      const r = await GitService.ignoreFolder({ id: node.id })
+                      const r = await ignoreFolder({ id: node.id })
                       const added = (r as any).added ?? 0
                       toast.success(`Folder ignored in Git (${added} pattern${added === 1 ? '' : 's'})`)
                     } catch (e: any) {

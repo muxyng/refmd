@@ -4,7 +4,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 
 import type { UserResponse } from '@/shared/api'
 
-import { login as loginApi, register as registerApi, me as meApi, deleteAccount as deleteAccountApi, AuthService, userKeys } from '@/entities/user'
+import { login as loginApi, register as registerApi, me as meApi, deleteAccount as deleteAccountApi, logout as logoutApi, userKeys } from '@/entities/user'
 
 type AuthState = {
   user: UserResponse | null
@@ -106,7 +106,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = useCallback(async () => {
     try {
-      await AuthService.logout()
+      await logoutApi()
     } catch (error) {
       console.warn('[auth] logout failed', error)
     }
