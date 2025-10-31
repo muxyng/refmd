@@ -11,7 +11,7 @@
     "test": "vitest run",
     "lint": "eslint --ext .ts,.tsx src",
     "gen:openapi": "bash -lc 'cd ../api && mkdir -p openapi && cargo run --quiet --bin export-openapi > openapi/openapi.json'",
-    "gen:client": "openapi -i ../api/openapi/openapi.json -o src/shared/api/client --client fetch --useOptions --exportCore true --exportServices true --exportModels true",
+    "gen:client": "openapi-ts -i ../api/openapi/openapi.json -o src/shared/api/client -c legacy/fetch",
     "gen:api": "npm run gen:openapi && npm run gen:client"
   },
   "dependencies": {
@@ -62,6 +62,7 @@
     "yjs": "^13.6.27"
   },
   "devDependencies": {
+    "@hey-api/openapi-ts": "^0.86.10",
     "@tanstack/nitro-v2-vite-plugin": "^1.132.31",
     "@tanstack/virtual-file-routes": "^1.132.31",
     "@testing-library/dom": "^10.4.0",
@@ -76,7 +77,6 @@
     "eslint-plugin-boundaries": "^4.2.2",
     "eslint-plugin-import": "^2.31.0",
     "jsdom": "^27.0.0",
-    "openapi-typescript-codegen": "^0.29.0",
     "prettier": "^3.5.3",
     "typescript": "^5.7.2",
     "vite": "^7.1.7",

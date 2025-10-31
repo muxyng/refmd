@@ -2,8 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { GitCommit as GitCommitIcon, RefreshCw, User, Clock, AlignLeft, Columns2 } from 'lucide-react'
 import React from 'react'
 
-import type { GitCommitItem, DocumentDiffResult } from '@/shared/api'
-import { DocumentDiffLineType } from '@/shared/api'
+import type { GitCommitItem, DocumentDiffResult, DocumentDiffLineType } from '@/shared/api'
 import { overlayPanelClass } from '@/shared/lib/overlay-classes'
 import { cn } from '@/shared/lib/utils'
 import { Alert, AlertDescription } from '@/shared/ui/alert'
@@ -13,11 +12,16 @@ import { DiffViewer } from '@/shared/ui/diff-viewer'
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/shared/ui/resizable'
 import { ScrollArea } from '@/shared/ui/scroll-area'
 
-import { GitService as GitSvc } from '@/entities/git'
+import { getHistory, getCommitDiff } from '@/entities/git'
 
 import { FileExpander } from './file-expander'
 
 type Props = { open: boolean; onOpenChange: (open: boolean) => void }
+
+const DIFF_LINE_TYPE = {
+  ADDED: 'added' as DocumentDiffLineType,
+  DELETED: 'deleted' as DocumentDiffLineType,
+} as const
 
 export default function GitHistoryDialog({ open, onOpenChange }: Props) {
   const qc = useQueryClient()
@@ -30,13 +34,13 @@ export default function GitHistoryDialog({ open, onOpenChange }: Props) {
   React.useEffect(() => {
     if (open) {
       try { qc.removeQueries({ queryKey: ['git-history'] }) } catch {}
-      qc.prefetchQuery({ queryKey: ['git-history'], queryFn: () => GitSvc.getHistory() })
+      qc.prefetchQuery({ queryKey: ['git-history'], queryFn: () => getHistory() })
     }
   }, [open, qc])
 
   const { data, isLoading, isFetching, error } = useQuery({
     queryKey: ['git-history'],
-    queryFn: () => GitSvc.getHistory(),
+    queryFn: () => getHistory(),
     enabled: open,
     refetchOnMount: 'always',
     staleTime: 0,
@@ -51,7 +55,7 @@ export default function GitHistoryDialog({ open, onOpenChange }: Props) {
       setDiffError(null)
       setCommitDiffs([])
       const parent = commit.hash + '^'
-      const r = await GitSvc.getCommitDiff({ from: parent, to: commit.hash })
+      const r = await getCommitDiff({ _from: parent, to: commit.hash })
       setCommitDiffs(r)
       setExpanded(new Set(r.map((d) => d.file_path)))
     } catch (e: any) {
@@ -155,8 +159,8 @@ export default function GitHistoryDialog({ open, onOpenChange }: Props) {
                           {commitDiffs.map((d) => {
                             const fp = d.file_path || ''
                             const isExp = expanded.has(fp)
-                            const adds = d.diff_lines.filter((l) => l.line_type === DocumentDiffLineType.ADDED).length
-                            const dels = d.diff_lines.filter((l) => l.line_type === DocumentDiffLineType.DELETED).length
+                            const adds = d.diff_lines.filter((l) => l.line_type === DIFF_LINE_TYPE.ADDED).length
+                            const dels = d.diff_lines.filter((l) => l.line_type === DIFF_LINE_TYPE.DELETED).length
                             return (
                               <FileExpander key={fp} filePath={fp} isExpanded={isExp} onToggle={() => toggle(fp)} stats={{ additions: adds, deletions: dels }}>
                                 <div className="p-4">

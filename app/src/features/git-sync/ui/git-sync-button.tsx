@@ -10,7 +10,7 @@ import { Button } from '@/shared/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/shared/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip'
 
-import { GitService } from '@/entities/git'
+import { getStatus, getConfig, syncNow, initRepository } from '@/entities/git'
 
 import GitChangesDialog from './git-changes-dialog'
 import GitConfigDialog from './git-config-dialog'
@@ -18,8 +18,8 @@ import GitHistoryDialog from './git-history-dialog'
 
 type Props = { className?: string; compact?: boolean }
 
-type GitStatus = Awaited<ReturnType<typeof GitService.getStatus>>
-type GitConfig = Awaited<ReturnType<typeof GitService.getConfig>>
+type GitStatus = Awaited<ReturnType<typeof getStatus>>
+type GitConfig = Awaited<ReturnType<typeof getConfig>>
 
 function useGitSyncController() {
   const qc = useQueryClient()
@@ -32,11 +32,11 @@ function useGitSyncController() {
     data: status,
     isLoading: statusLoading,
     error: statusError,
-  } = useQuery<GitStatus, unknown>({ queryKey: ['git-status'], queryFn: () => GitService.getStatus(), refetchInterval: 10000, retry: false })
-  const { data: config } = useQuery<GitConfig>({ queryKey: ['git-config'], queryFn: () => GitService.getConfig(), retry: false })
+  } = useQuery<GitStatus, unknown>({ queryKey: ['git-status'], queryFn: () => getStatus(), refetchInterval: 10000, retry: false })
+  const { data: config } = useQuery<GitConfig>({ queryKey: ['git-config'], queryFn: () => getConfig(), retry: false })
 
   const syncMutation = useMutation({
-    mutationFn: () => GitService.syncNow({ requestBody: { message: undefined } }),
+    mutationFn: () => syncNow({ requestBody: { message: undefined } }),
     onSuccess: (data: any) => {
       toast.success(`Sync complete: ${(data?.files_changed ?? 0)} files changed`)
       qc.invalidateQueries({ queryKey: ['git-status'] })
@@ -48,7 +48,7 @@ function useGitSyncController() {
   })
 
   const initMutation = useMutation({
-    mutationFn: () => GitService.initRepository(),
+    mutationFn: () => initRepository(),
     onSuccess: () => {
       toast.success('Git repository initialized')
       qc.invalidateQueries({ queryKey: ['git-status'] })

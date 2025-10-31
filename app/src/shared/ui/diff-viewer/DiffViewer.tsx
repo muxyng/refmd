@@ -1,8 +1,13 @@
-import type { DocumentDiffLine, DocumentDiffResult } from '@/shared/api'
-import { DocumentDiffLineType } from '@/shared/api'
+import type { DocumentDiffLine, DocumentDiffResult, DocumentDiffLineType } from '@/shared/api'
 import { cn } from '@/shared/lib/utils'
 
 type ViewMode = 'unified' | 'split'
+
+const DIFF_LINE_TYPE = {
+  ADDED: 'added' as DocumentDiffLineType,
+  DELETED: 'deleted' as DocumentDiffLineType,
+  CONTEXT: 'context' as DocumentDiffLineType,
+} as const
 
 type Props = {
   diffResult: DocumentDiffResult
@@ -29,9 +34,9 @@ function UnifiedDiffView({ diffResult, showLineNumbers, className }: { diffResul
           key={idx}
           className={cn(
             'flex',
-            line.line_type === DocumentDiffLineType.ADDED && 'bg-green-50 dark:bg-green-950/30',
-            line.line_type === DocumentDiffLineType.DELETED && 'bg-red-50 dark:bg-red-950/30',
-            line.line_type === DocumentDiffLineType.CONTEXT && 'bg-background'
+            line.line_type === DIFF_LINE_TYPE.ADDED && 'bg-green-50 dark:bg-green-950/30',
+            line.line_type === DIFF_LINE_TYPE.DELETED && 'bg-red-50 dark:bg-red-950/30',
+            line.line_type === DIFF_LINE_TYPE.CONTEXT && 'bg-background'
           )}
         >
           {showLineNumbers && (
@@ -43,12 +48,12 @@ function UnifiedDiffView({ diffResult, showLineNumbers, className }: { diffResul
           <span
             className={cn(
               'px-2 select-none',
-              line.line_type === DocumentDiffLineType.ADDED && 'text-green-600 dark:text-green-400',
-              line.line_type === DocumentDiffLineType.DELETED && 'text-red-600 dark:text-red-400',
-              line.line_type === DocumentDiffLineType.CONTEXT && 'text-muted-foreground'
-          )}
-        >
-          {line.line_type === DocumentDiffLineType.ADDED ? '+' : line.line_type === DocumentDiffLineType.DELETED ? '-' : ' '}
+              line.line_type === DIFF_LINE_TYPE.ADDED && 'text-green-600 dark:text-green-400',
+              line.line_type === DIFF_LINE_TYPE.DELETED && 'text-red-600 dark:text-red-400',
+              line.line_type === DIFF_LINE_TYPE.CONTEXT && 'text-muted-foreground'
+            )}
+          >
+          {line.line_type === DIFF_LINE_TYPE.ADDED ? '+' : line.line_type === DIFF_LINE_TYPE.DELETED ? '-' : ' '}
           </span>
           <span className="flex-1 whitespace-pre">{line.content}</span>
         </div>
@@ -63,24 +68,24 @@ function SplitDiffView({ diffResult, showLineNumbers, className }: { diffResult:
   let i = 0
   while (i < lines.length) {
     const line = lines[i]
-    if (line.line_type === DocumentDiffLineType.CONTEXT) {
+    if (line.line_type === DIFF_LINE_TYPE.CONTEXT) {
       processed.push({ old: line, new: line })
       i++
-    } else if (line.line_type === DocumentDiffLineType.DELETED) {
+    } else if (line.line_type === DIFF_LINE_TYPE.DELETED) {
       let j = i + 1
-      while (j < lines.length && lines[j].line_type === DocumentDiffLineType.DELETED) j++
-      if (j < lines.length && lines[j].line_type === DocumentDiffLineType.ADDED) {
+      while (j < lines.length && lines[j].line_type === DIFF_LINE_TYPE.DELETED) j++
+      if (j < lines.length && lines[j].line_type === DIFF_LINE_TYPE.ADDED) {
         const deletedBatch = lines.slice(i, j)
         let k = j
         deletedBatch.forEach((del) => {
-          if (k < lines.length && lines[k].line_type === DocumentDiffLineType.ADDED) {
+          if (k < lines.length && lines[k].line_type === DIFF_LINE_TYPE.ADDED) {
             processed.push({ old: del, new: lines[k] })
             k++
           } else {
             processed.push({ old: del })
           }
         })
-        while (k < lines.length && lines[k].line_type === DocumentDiffLineType.ADDED) {
+        while (k < lines.length && lines[k].line_type === DIFF_LINE_TYPE.ADDED) {
           processed.push({ new: lines[k] })
           k++
         }
@@ -89,7 +94,7 @@ function SplitDiffView({ diffResult, showLineNumbers, className }: { diffResult:
         processed.push({ old: line })
         i++
       }
-    } else if (line.line_type === DocumentDiffLineType.ADDED) {
+    } else if (line.line_type === DIFF_LINE_TYPE.ADDED) {
       processed.push({ new: line })
       i++
     } else {
@@ -106,8 +111,8 @@ function SplitDiffView({ diffResult, showLineNumbers, className }: { diffResult:
               key={`old-${idx}`}
               className={cn(
                 'flex min-h-[1.5rem]',
-                pair.old?.line_type === DocumentDiffLineType.DELETED && 'bg-red-50 dark:bg-red-950/30',
-                pair.old?.line_type === DocumentDiffLineType.CONTEXT && 'bg-background',
+                pair.old?.line_type === DIFF_LINE_TYPE.DELETED && 'bg-red-50 dark:bg-red-950/30',
+                pair.old?.line_type === DIFF_LINE_TYPE.CONTEXT && 'bg-background',
                 !pair.old && 'bg-muted/20'
               )}
             >
@@ -116,8 +121,8 @@ function SplitDiffView({ diffResult, showLineNumbers, className }: { diffResult:
               )}
               {pair.old && (
                 <>
-                  <span className={cn('px-2 select-none', pair.old.line_type === DocumentDiffLineType.DELETED && 'text-red-600 dark:text-red-400', pair.old.line_type === DocumentDiffLineType.CONTEXT && 'text-muted-foreground')}>
-                    {pair.old.line_type === DocumentDiffLineType.DELETED ? '-' : ' '}
+                  <span className={cn('px-2 select-none', pair.old.line_type === DIFF_LINE_TYPE.DELETED && 'text-red-600 dark:text-red-400', pair.old.line_type === DIFF_LINE_TYPE.CONTEXT && 'text-muted-foreground')}>
+                    {pair.old.line_type === DIFF_LINE_TYPE.DELETED ? '-' : ' '}
                   </span>
                   <span className="flex-1 whitespace-pre overflow-x-auto">{pair.old.content}</span>
                 </>
@@ -131,8 +136,8 @@ function SplitDiffView({ diffResult, showLineNumbers, className }: { diffResult:
               key={`new-${idx}`}
               className={cn(
                 'flex min-h-[1.5rem]',
-                pair.new?.line_type === DocumentDiffLineType.ADDED && 'bg-green-50 dark:bg-green-950/30',
-                pair.new?.line_type === DocumentDiffLineType.CONTEXT && 'bg-background',
+                pair.new?.line_type === DIFF_LINE_TYPE.ADDED && 'bg-green-50 dark:bg-green-950/30',
+                pair.new?.line_type === DIFF_LINE_TYPE.CONTEXT && 'bg-background',
                 !pair.new && 'bg-muted/20'
               )}
             >
@@ -141,8 +146,8 @@ function SplitDiffView({ diffResult, showLineNumbers, className }: { diffResult:
               )}
               {pair.new && (
                 <>
-                  <span className={cn('px-2 select-none', pair.new.line_type === DocumentDiffLineType.ADDED && 'text-green-600 dark:text-green-400', pair.new.line_type === DocumentDiffLineType.CONTEXT && 'text-muted-foreground')}>
-                    {pair.new.line_type === DocumentDiffLineType.ADDED ? '+' : ' '}
+                  <span className={cn('px-2 select-none', pair.new.line_type === DIFF_LINE_TYPE.ADDED && 'text-green-600 dark:text-green-400', pair.new.line_type === DIFF_LINE_TYPE.CONTEXT && 'text-muted-foreground')}>
+                    {pair.new.line_type === DIFF_LINE_TYPE.ADDED ? '+' : ' '}
                   </span>
                   <span className="flex-1 whitespace-pre overflow-x-auto">{pair.new.content}</span>
                 </>

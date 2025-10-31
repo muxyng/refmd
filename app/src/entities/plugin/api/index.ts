@@ -1,4 +1,15 @@
-import { PluginsService } from '@/shared/api'
+import {
+  listRecords as apiListRecords,
+  pluginsCreateRecord as apiPluginsCreateRecord,
+  pluginsDeleteRecord as apiPluginsDeleteRecord,
+  pluginsExecAction as apiPluginsExecAction,
+  pluginsGetKv as apiPluginsGetKv,
+  pluginsGetManifest as apiPluginsGetManifest,
+  pluginsInstallFromUrl as apiPluginsInstallFromUrl,
+  pluginsPutKv as apiPluginsPutKv,
+  pluginsUninstall as apiPluginsUninstall,
+  pluginsUpdateRecord as apiPluginsUpdateRecord,
+} from '@/shared/api'
 import type { ManifestItem as ClientManifestItem } from '@/shared/api/client'
 
 export type PluginManifestItem = ClientManifestItem
@@ -14,7 +25,7 @@ export const pluginManifestQuery = (token?: string | null) => ({
 })
 
 export async function getPluginManifest(token?: string): Promise<PluginManifestItem[]> {
-  return PluginsService.pluginsGetManifest({ token })
+  return apiPluginsGetManifest({ token })
 }
 
 export async function execPluginAction(
@@ -23,7 +34,7 @@ export async function execPluginAction(
   payload: Record<string, unknown> | undefined,
   token?: string,
 ) {
-  return PluginsService.pluginsExecAction({
+  return apiPluginsExecAction({
     plugin: pluginId,
     action,
     requestBody: { payload },
@@ -37,7 +48,7 @@ export async function listPluginRecords(
   kind: string,
   token?: string,
 ) {
-  return PluginsService.listRecords({ plugin: pluginId, docId, kind, token })
+  return apiListRecords({ plugin: pluginId, docId, kind, token })
 }
 
 export async function createPluginRecord(
@@ -47,15 +58,15 @@ export async function createPluginRecord(
   data: unknown,
   token?: string,
 ) {
-  return PluginsService.pluginsCreateRecord({ plugin: pluginId, docId, kind, requestBody: { data }, token })
+  return apiPluginsCreateRecord({ plugin: pluginId, docId, kind, requestBody: { data }, token })
 }
 
 export async function updatePluginRecord(pluginId: string, id: string, patch: unknown) {
-  return PluginsService.pluginsUpdateRecord({ plugin: pluginId, id, requestBody: { patch } })
+  return apiPluginsUpdateRecord({ plugin: pluginId, id, requestBody: { patch } })
 }
 
 export async function deletePluginRecord(pluginId: string, id: string) {
-  return PluginsService.pluginsDeleteRecord({ plugin: pluginId, id })
+  return apiPluginsDeleteRecord({ plugin: pluginId, id })
 }
 
 export async function getPluginKv(
@@ -64,7 +75,7 @@ export async function getPluginKv(
   key: string,
   token?: string,
 ) {
-  return PluginsService.pluginsGetKv({ plugin: pluginId, docId, key, token })
+  return apiPluginsGetKv({ plugin: pluginId, docId, key, token })
 }
 
 export async function putPluginKv(
@@ -74,13 +85,13 @@ export async function putPluginKv(
   value: unknown,
   token?: string,
 ) {
-  return PluginsService.pluginsPutKv({ plugin: pluginId, docId, key, requestBody: { value }, token })
+  return apiPluginsPutKv({ plugin: pluginId, docId, key, requestBody: { value }, token })
 }
 
 export async function installPluginFromUrl(url: string, token?: string) {
-  return PluginsService.pluginsInstallFromUrl({ requestBody: { url, token } })
+  return apiPluginsInstallFromUrl({ requestBody: { url, token } })
 }
 
 export async function uninstallPlugin(id: string) {
-  return PluginsService.pluginsUninstall({ requestBody: { id } })
+  return apiPluginsUninstall({ requestBody: { id } })
 }

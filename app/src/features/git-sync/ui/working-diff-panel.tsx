@@ -1,15 +1,14 @@
 import { RefreshCw, GitBranch, AlignLeft, Columns2 } from 'lucide-react'
 import React from 'react'
 
-import type { DocumentDiffResult } from '@/shared/api'
-import { DocumentDiffLineType } from '@/shared/api'
+import type { DocumentDiffResult, DocumentDiffLineType } from '@/shared/api'
 import { cn } from '@/shared/lib/utils'
 import { Alert, AlertDescription } from '@/shared/ui/alert'
 import { Button } from '@/shared/ui/button'
 import { DiffViewer } from '@/shared/ui/diff-viewer'
 import { ScrollArea } from '@/shared/ui/scroll-area'
 
-import { GitService as GitSvc } from '@/entities/git'
+import { getWorkingDiff } from '@/entities/git'
 
 import { FileExpander } from './file-expander'
 
@@ -17,12 +16,17 @@ type ViewMode = 'unified' | 'split'
 
 type Props = { documentPath?: string; className?: string }
 
+const DIFF_LINE_TYPE = {
+  ADDED: 'added' as DocumentDiffLineType,
+  DELETED: 'deleted' as DocumentDiffLineType,
+} as const
+
 function getStats(diff: DocumentDiffResult): { additions: number; deletions: number } {
   let additions = 0
   let deletions = 0
   for (const l of diff.diff_lines || []) {
-    if (l.line_type === DocumentDiffLineType.ADDED) additions++
-    else if (l.line_type === DocumentDiffLineType.DELETED) deletions++
+    if (l.line_type === DIFF_LINE_TYPE.ADDED) additions++
+    else if (l.line_type === DIFF_LINE_TYPE.DELETED) deletions++
   }
   return { additions, deletions }
 }
@@ -38,7 +42,7 @@ export function WorkingDiffPanel({ documentPath, className }: Props) {
     try {
       setLoading(true)
       setError(null)
-      const r = await GitSvc.getWorkingDiff()
+      const r = await getWorkingDiff()
       setDiffs(r)
       if (documentPath) {
         const match = r.filter((d) => d.file_path === documentPath).map((d) => d.file_path)

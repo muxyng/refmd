@@ -3,13 +3,17 @@
 import { toast } from 'sonner'
 
 import {
-  PluginsService,
-  MarkdownService,
-  FilesService,
-  AuthService,
+  listRecords,
+  pluginsExecAction,
+  pluginsGetKv,
+  pluginsPutKv,
+  renderMarkdown,
+  renderMarkdownMany,
+  uploadFile,
+  me as fetchMe,
   OpenAPI,
   type ManifestItem,
-} from '@/shared/api/client'
+} from '@/shared/api'
 
 import type { DocumentHeaderAction } from '@/processes/collaboration/contexts/realtime-context'
 
@@ -118,7 +122,7 @@ export async function createPluginHost(manifest: ManifestItem, ctx: PluginHostCo
       })
       if (hostHandled) return hostHandled
 
-      const json = await PluginsService.pluginsExecAction({
+      const json = await pluginsExecAction({
         plugin: manifest.id,
         action,
         requestBody: { payload: args },
@@ -135,11 +139,11 @@ export async function createPluginHost(manifest: ManifestItem, ctx: PluginHostCo
     },
     origin: apiOrigin,
     api: {
-      me: () => AuthService.me(),
+      me: () => fetchMe(),
       renderMarkdown: (text: string, options: any) =>
-        MarkdownService.renderMarkdown({ requestBody: { text, options } }),
+        renderMarkdown({ requestBody: { text, options } }),
       renderMarkdownMany: (items: Array<{ text: string; options: any }>) =>
-        MarkdownService.renderMarkdownMany({ requestBody: { items } }),
+        renderMarkdownMany({ requestBody: { items } }),
     },
     ui: {
       hydrateAttachments: async (root: Element) => {
@@ -398,7 +402,7 @@ async function executeHostAction(
         const kind = args?.kind
         if (typeof kind !== 'string' || !kind) throw fail('BAD_REQUEST', 'kind required')
         const token = (args?.token ?? ctx.token) || undefined
-        const response = await PluginsService.listRecords({
+        const response = await listRecords({
           plugin: ctx.pluginId,
           docId,
           kind,
@@ -411,7 +415,7 @@ async function executeHostAction(
         const key = args?.key
         if (typeof key !== 'string' || !key) throw fail('BAD_REQUEST', 'key required')
         const token = (args?.token ?? ctx.token) || undefined
-        const response = await PluginsService.pluginsGetKv({
+        const response = await pluginsGetKv({
           plugin: ctx.pluginId,
           docId,
           key,
@@ -425,7 +429,7 @@ async function executeHostAction(
         if (typeof key !== 'string' || !key) throw fail('BAD_REQUEST', 'key required')
         const value = args?.value ?? null
         const token = (args?.token ?? ctx.token) || undefined
-        const response = await PluginsService.pluginsPutKv({
+        const response = await pluginsPutKv({
           plugin: ctx.pluginId,
           docId,
           key,
@@ -438,7 +442,7 @@ async function executeHostAction(
         const docId = ensureDocId(args?.docId)
         const file: File | undefined = args?.file
         if (!(file instanceof File)) throw fail('BAD_REQUEST', 'file required')
-        const response = await FilesService.uploadFile({
+        const response = await uploadFile({
           formData: { document_id: docId, file } as any,
         })
         return ok(response)

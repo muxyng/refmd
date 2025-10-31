@@ -11,7 +11,7 @@ import { Input } from '@/shared/ui/input'
 import { Label } from '@/shared/ui/label'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/shared/ui/select'
 
-import { GitService } from '@/entities/git'
+import { getConfig, getStatus, createOrUpdateConfig, deinitRepository } from '@/entities/git'
 
 type Props = { open: boolean; onOpenChange: (open: boolean) => void }
 
@@ -19,13 +19,13 @@ export default function GitConfigDialog({ open, onOpenChange }: Props) {
   const qc = useQueryClient()
   const { data: existingConfig } = useQuery({
     queryKey: ['git-config'],
-    queryFn: () => GitService.getConfig(),
+    queryFn: () => getConfig(),
     enabled: open,
     retry: false,
   })
   const { data: gitStatus } = useQuery({
     queryKey: ['git-status'],
-    queryFn: () => GitService.getStatus(),
+    queryFn: () => getStatus(),
     enabled: open,
     retry: false,
   })
@@ -52,14 +52,14 @@ export default function GitConfigDialog({ open, onOpenChange }: Props) {
     mutationFn: async () => {
       if (!repositoryUrl.trim()) throw new Error('Repository URL is required')
       const auth_data = authType === 'token' ? { token } : { private_key: privateKey }
-      return GitService.createOrUpdateConfig({ requestBody: { repository_url: repositoryUrl.trim(), branch_name: branchName.trim() || 'main', auth_type: authType, auth_data, auto_sync: autoSync } })
+      return createOrUpdateConfig({ requestBody: { repository_url: repositoryUrl.trim(), branch_name: branchName.trim() || 'main', auth_type: authType, auth_data, auto_sync: autoSync } })
     },
     onSuccess: () => { toast.success('Git settings saved'); qc.invalidateQueries({ queryKey: ['git-config'] }); qc.invalidateQueries({ queryKey: ['git-status'] }); onOpenChange(false) },
     onError: (e: any) => { toast.error(`Failed to save settings: ${e?.message || e}`) }
   })
 
   const deinitMutation = useMutation({
-    mutationFn: () => GitService.deinitRepository(),
+    mutationFn: () => deinitRepository(),
     onSuccess: () => { toast.success('Stopped using Git'); qc.invalidateQueries({ queryKey: ['git-status'] }) },
     onError: (e: any) => { toast.error(`Failed to stop: ${e?.message || e}`) }
   })

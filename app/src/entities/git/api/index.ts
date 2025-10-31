@@ -1,4 +1,17 @@
-import { GitService } from '@/shared/api'
+import {
+  createOrUpdateConfig as apiCreateOrUpdateConfig,
+  deinitRepository as apiDeinitRepository,
+  getChanges as apiGetChanges,
+  getCommitDiff as apiGetCommitDiff,
+  getConfig as apiGetConfig,
+  getHistory as apiGetHistory,
+  getStatus as apiGetStatus,
+  getWorkingDiff as apiGetWorkingDiff,
+  ignoreDocument as apiIgnoreDocument,
+  ignoreFolder as apiIgnoreFolder,
+  initRepository as apiInitRepository,
+  syncNow as apiSyncNow,
+} from '@/shared/api'
 import type { DocumentDiffResult, GitChangesResponse, GitHistoryResponse, GitStatus } from '@/shared/api'
 
 export const gitKeys = {
@@ -11,21 +24,35 @@ export const gitKeys = {
   diffCommits: (from: string, to: string) => ['git','diff','commits', { from, to }] as const,
 }
 
-export { GitService }
-
 // Use-case oriented helpers (thin wrappers) to decouple features from raw service signatures
 export async function fetchStatus(): Promise<GitStatus> {
-  return GitService.getStatus()
+  return apiGetStatus()
 }
 
 export async function fetchChanges(): Promise<GitChangesResponse> {
-  return GitService.getChanges()
+  return apiGetChanges()
 }
 
 export async function fetchHistory(): Promise<GitHistoryResponse> {
-  return GitService.getHistory()
+  return apiGetHistory()
 }
 
 export async function fetchCommitDiff(from: string, to: string): Promise<DocumentDiffResult[]> {
-  return GitService.getCommitDiff({ from, to })
+  return apiGetCommitDiff({ _from: from, to })
 }
+
+export {
+  apiGetStatus as getStatus,
+  apiGetConfig as getConfig,
+  apiGetChanges as getChanges,
+  apiGetHistory as getHistory,
+  apiGetWorkingDiff as getWorkingDiff,
+  apiGetCommitDiff as getCommitDiff,
+  apiCreateOrUpdateConfig as createOrUpdateConfig,
+  apiDeinitRepository as deinitRepository,
+  apiInitRepository as initRepository,
+  apiSyncNow as syncNow,
+  apiIgnoreDocument as ignoreDocument,
+  apiIgnoreFolder as ignoreFolder,
+}
+

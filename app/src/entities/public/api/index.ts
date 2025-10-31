@@ -1,6 +1,13 @@
 import { useQuery } from '@tanstack/react-query'
 
-import { PublicDocumentsService } from '@/shared/api'
+import {
+  getPublicByOwnerAndId as apiGetPublicByOwnerAndId,
+  getPublicContentByOwnerAndId as apiGetPublicContentByOwnerAndId,
+  getPublishStatus as apiGetPublishStatus,
+  listUserPublicDocuments as apiListUserPublicDocuments,
+  publishDocument as apiPublishDocument,
+  unpublishDocument as apiUnpublishDocument,
+} from '@/shared/api'
 import type { PublicDocumentSummary } from '@/shared/api'
 
 export const publicKeys = {
@@ -9,11 +16,9 @@ export const publicKeys = {
   status: (id: string) => ['public','status', id] as const,
 }
 
-export { PublicDocumentsService }
-
 export const userPublicDocsQuery = (name: string) => ({
   queryKey: publicKeys.byUser(name),
-  queryFn: () => PublicDocumentsService.listUserPublicDocuments({ name }) as Promise<PublicDocumentSummary[]>,
+  queryFn: () => apiListUserPublicDocuments({ name }) as Promise<PublicDocumentSummary[]>,
   enabled: !!name,
 })
 
@@ -23,25 +28,25 @@ export function useUserPublicDocuments(name?: string) {
 
 // Use-case oriented helpers
 export async function listUserPublicDocuments(name: string) {
-  return PublicDocumentsService.listUserPublicDocuments({ name })
+  return apiListUserPublicDocuments({ name })
 }
 
 export async function getPublicByOwnerAndId(name: string, id: string) {
-  return PublicDocumentsService.getPublicByOwnerAndId({ name, id })
+  return apiGetPublicByOwnerAndId({ name, id })
 }
 
 export async function getPublicContentByOwnerAndId(name: string, id: string) {
-  return PublicDocumentsService.getPublicContentByOwnerAndId({ name, id })
+  return apiGetPublicContentByOwnerAndId({ name, id })
 }
 
 export async function publishDocument(id: string) {
-  return PublicDocumentsService.publishDocument({ id })
+  return apiPublishDocument({ id })
 }
 
 export async function unpublishDocument(id: string) {
-  return PublicDocumentsService.unpublishDocument({ id })
+  return apiUnpublishDocument({ id })
 }
 
 export async function getPublishStatus(id: string) {
-  return PublicDocumentsService.getPublishStatus({ id })
+  return apiGetPublishStatus({ id })
 }

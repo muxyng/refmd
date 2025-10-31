@@ -3,7 +3,6 @@ import { AlignLeft, Clock, Columns2, DownloadCloud, History as HistoryIcon, Rota
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
-import { SnapshotDiffKind, SnapshotDiffBaseParam } from '@/shared/api'
 import type { SnapshotDiffResponse, SnapshotSummary } from '@/shared/api'
 import { overlayPanelClass } from '@/shared/lib/overlay-classes'
 import { cn } from '@/shared/lib/utils'
@@ -71,7 +70,7 @@ export function SnapshotHistoryDialog({ documentId, open, onOpenChange, token, c
   }, [compareBase, hasPreviousSnapshot])
 
   const baseParam =
-    compareBase === 'previous' ? SnapshotDiffBaseParam.PREVIOUS : SnapshotDiffBaseParam.CURRENT
+    compareBase === 'previous' ? 'previous' : 'current'
 
   const diffQueryOptions = snapshotDiffQuery(
     documentId,
@@ -311,7 +310,7 @@ export function SnapshotHistoryDialog({ documentId, open, onOpenChange, token, c
 }
 
 function SnapshotDiffViewer({ diff, viewMode }: { diff: SnapshotDiffResponse; viewMode: 'unified' | 'split' }) {
-  const baseLabel = diff.base.kind === SnapshotDiffKind.SNAPSHOT && diff.base.snapshot
+  const baseLabel = diff.base.kind === 'snapshot' && diff.base.snapshot
     ? diff.base.snapshot.label || 'Snapshot'
     : 'Current document'
   const diffResult = diff.diff

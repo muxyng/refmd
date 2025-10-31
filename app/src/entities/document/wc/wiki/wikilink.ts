@@ -1,4 +1,4 @@
-import { DocumentsService } from '@/shared/api'
+import { getDocument } from '@/shared/api'
 import type { Document as ApiDocument } from '@/shared/api'
 
 type DocInfo = {
@@ -70,7 +70,7 @@ function relativeTime(date?: string): string {
 async function fetchDoc(id: string): Promise<DocInfo | null> {
   try {
     const token = shareToken() || undefined
-    const data = await DocumentsService.getDocument({ id, token })
+    const data = await getDocument({ id, token })
     const doc = data as ApiDocument
     return {
       id: String(doc?.id ?? id),
