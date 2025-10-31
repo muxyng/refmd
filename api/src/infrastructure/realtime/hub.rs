@@ -168,35 +168,44 @@ impl Hub {
                                 &doc_for_snap,
                                 SnapshotPersistOptions {
                                     clear_updates: false,
+                                    skip_if_unchanged: true,
                                     ..Default::default()
                                 },
                             )
                             .await
                         {
                             Ok(result) => {
-                                let label = format!(
-                                    "Snapshot {}",
-                                    Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
-                                );
-                                if let Err(e) = snapshot_service
-                                    .archive_snapshot(
-                                        &persist_doc,
-                                        &result.snapshot_bytes,
-                                        result.version,
-                                        SnapshotArchiveOptions {
-                                            label: label.as_str(),
-                                            notes: None,
-                                            kind: SnapshotArchiveKind::Automatic,
-                                            created_by: None,
-                                        },
-                                    )
-                                    .await
-                                {
+                                if result.persisted {
+                                    let label = format!(
+                                        "Snapshot {}",
+                                        Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+                                    );
+                                    if let Err(e) = snapshot_service
+                                        .archive_snapshot(
+                                            &persist_doc,
+                                            &result.snapshot_bytes,
+                                            result.version,
+                                            SnapshotArchiveOptions {
+                                                label: label.as_str(),
+                                                notes: None,
+                                                kind: SnapshotArchiveKind::Automatic,
+                                                created_by: None,
+                                            },
+                                        )
+                                        .await
+                                    {
+                                        tracing::debug!(
+                                            document_id = %persist_doc,
+                                            version = result.version,
+                                            error = ?e,
+                                            "persist_document_snapshot_archive_failed"
+                                        );
+                                    }
+                                } else {
                                     tracing::debug!(
                                         document_id = %persist_doc,
                                         version = result.version,
-                                        error = ?e,
-                                        "persist_document_snapshot_archive_failed"
+                                        "persist_document_snapshot_skipped_no_changes"
                                     );
                                 }
                             }
@@ -416,6 +425,7 @@ impl Hub {
                     &room.doc,
                     SnapshotPersistOptions {
                         clear_updates: false,
+                        skip_if_unchanged: true,
                         prune_snapshots: Some(keep_versions),
                         prune_updates_before: Some(cutoff),
                     },

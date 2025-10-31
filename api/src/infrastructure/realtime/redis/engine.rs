@@ -492,6 +492,7 @@ fn spawn_persistence_worker(
                                     &hydrated.doc,
                                     SnapshotPersistOptions {
                                         clear_updates: true,
+                                        skip_if_unchanged: true,
                                         ..Default::default()
                                     },
                                 )
@@ -515,7 +516,7 @@ fn spawn_persistence_worker(
                                                 }
                                             }
                                         };
-                                        if should_archive {
+                                        if should_archive && result.persisted {
                                             let label = format!(
                                                 "Snapshot {}",
                                                 Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
@@ -541,6 +542,12 @@ fn spawn_persistence_worker(
                                                     "redis_worker_snapshot_archive_failed"
                                                 );
                                             }
+                                        } else if should_archive {
+                                            tracing::debug!(
+                                                document_id = %doc_uuid,
+                                                version = result.version,
+                                                "redis_worker_snapshot_skipped_no_changes"
+                                            );
                                         }
                                     }
                                 }

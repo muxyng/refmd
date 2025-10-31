@@ -29,6 +29,7 @@ pub struct SnapshotService {
 
 pub struct SnapshotPersistOptions {
     pub clear_updates: bool,
+    pub skip_if_unchanged: bool,
     pub prune_snapshots: Option<i64>,
     pub prune_updates_before: Option<i64>,
 }
@@ -37,6 +38,7 @@ impl Default for SnapshotPersistOptions {
     fn default() -> Self {
         Self {
             clear_updates: false,
+            skip_if_unchanged: false,
             prune_snapshots: None,
             prune_updates_before: None,
         }
@@ -46,6 +48,7 @@ impl Default for SnapshotPersistOptions {
 pub struct SnapshotPersistResult {
     pub version: i64,
     pub snapshot_bytes: Vec<u8>,
+    pub persisted: bool,
 }
 
 pub struct MarkdownPersistResult {
@@ -107,11 +110,43 @@ impl SnapshotService {
             let txn = doc.transact();
             txn.encode_state_as_update_v1(&StateVector::default())
         };
-        let current_version = self
-            .persistence
-            .latest_snapshot_version(doc_id)
-            .await?
-            .unwrap_or(0);
+        let (current_version, previous_snapshot) = if options.skip_if_unchanged {
+            match self.persistence.latest_snapshot_entry(doc_id).await? {
+                Some((version, bytes)) => (version, Some(bytes)),
+                None => (0, None),
+            }
+        } else {
+            (
+                self.persistence
+                    .latest_snapshot_version(doc_id)
+                    .await?
+                    .unwrap_or(0),
+                None,
+            )
+        };
+
+        if options.skip_if_unchanged {
+            if let Some(prev) = previous_snapshot.as_ref() {
+                if prev.as_slice() == snapshot_bin.as_slice() {
+                    if options.clear_updates {
+                        self.persistence.clear_updates(doc_id).await?;
+                    }
+                    if let Some(keep) = options.prune_snapshots {
+                        self.persistence.prune_snapshots(doc_id, keep).await?;
+                    }
+                    if let Some(cutoff) = options.prune_updates_before {
+                        self.persistence
+                            .prune_updates_before(doc_id, cutoff)
+                            .await?;
+                    }
+                    return Ok(SnapshotPersistResult {
+                        version: current_version,
+                        snapshot_bytes: snapshot_bin,
+                        persisted: false,
+                    });
+                }
+            }
+        }
         let next_version = current_version + 1;
         self.persistence
             .persist_snapshot(doc_id, next_version, &snapshot_bin)
@@ -130,6 +165,7 @@ impl SnapshotService {
         Ok(SnapshotPersistResult {
             version: next_version,
             snapshot_bytes: snapshot_bin,
+            persisted: true,
         })
     }
 

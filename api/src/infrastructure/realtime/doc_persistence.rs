@@ -60,14 +60,26 @@ impl DocPersistencePort for SqlxDocPersistenceAdapter {
         Ok(())
     }
 
-    async fn latest_snapshot_version(&self, doc_id: &Uuid) -> anyhow::Result<Option<i64>> {
+    async fn latest_snapshot_entry(&self, doc_id: &Uuid) -> anyhow::Result<Option<(i64, Vec<u8>)>> {
         let row = sqlx::query(
-            "SELECT MAX(version) AS max_version FROM document_snapshots WHERE document_id = $1",
+            "SELECT version, snapshot FROM document_snapshots WHERE document_id = $1
+             ORDER BY version DESC LIMIT 1",
         )
         .bind(doc_id)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.and_then(|row| row.try_get::<i32, _>("max_version").ok().map(|v| v as i64)))
+        Ok(row.map(|row| {
+            let version = row.get::<i32, _>("version") as i64;
+            let snapshot = row.get("snapshot");
+            (version, snapshot)
+        }))
+    }
+
+    async fn latest_snapshot_version(&self, doc_id: &Uuid) -> anyhow::Result<Option<i64>> {
+        Ok(self
+            .latest_snapshot_entry(doc_id)
+            .await?
+            .map(|(version, _)| version))
     }
 
     async fn prune_snapshots(&self, doc_id: &Uuid, keep_latest: i64) -> anyhow::Result<()> {

@@ -26,6 +26,8 @@ pub trait DocPersistencePort: Send + Sync {
         snapshot: &[u8],
     ) -> anyhow::Result<()>;
 
+    async fn latest_snapshot_entry(&self, doc_id: &Uuid) -> anyhow::Result<Option<(i64, Vec<u8>)>>;
+
     async fn latest_snapshot_version(&self, doc_id: &Uuid) -> anyhow::Result<Option<i64>>;
 
     async fn prune_snapshots(&self, doc_id: &Uuid, keep_latest: i64) -> anyhow::Result<()>;
