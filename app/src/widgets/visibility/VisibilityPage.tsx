@@ -145,11 +145,11 @@ export default function VisibilityPage() {
                     return (
                       <div
                         key={doc.id}
-                        className="group flex flex-col gap-3 rounded-2xl border border-border/60 p-4 shadow-sm transition-all duration-200 hover:-translate-y-[2px] hover:border-primary/40"
+                        className="group flex flex-col gap-4 rounded-xl border border-border/70 bg-card p-5 text-card-foreground shadow-sm transition-all duration-200 hover:-translate-y-1 hover:border-primary/40"
                       >
                         <div className="flex flex-wrap justify-between gap-2">
                           <div className="space-y-1">
-                            <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-foreground">
+                            <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-card-foreground">
                               <FileText className="h-4 w-4 text-primary" />
                               <span className="truncate">{doc.title}</span>
                               <Badge variant="outline">Public</Badge>
