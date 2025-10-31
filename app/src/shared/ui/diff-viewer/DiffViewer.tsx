@@ -29,35 +29,43 @@ export function DiffViewer({ diffResult, viewMode = 'unified', showLineNumbers =
 function UnifiedDiffView({ diffResult, showLineNumbers, className }: { diffResult: DocumentDiffResult; showLineNumbers: boolean; className?: string }) {
   return (
     <div className={cn('font-mono text-sm overflow-x-auto', className)}>
-      {(diffResult.diff_lines || []).map((line, idx) => (
-        <div
-          key={idx}
-          className={cn(
-            'flex',
-            line.line_type === DIFF_LINE_TYPE.ADDED && 'bg-green-50 dark:bg-green-950/30',
-            line.line_type === DIFF_LINE_TYPE.DELETED && 'bg-red-50 dark:bg-red-950/30',
-            line.line_type === DIFF_LINE_TYPE.CONTEXT && 'bg-background'
-          )}
-        >
-          {showLineNumbers && (
-            <>
-              <span className="px-2 text-muted-foreground text-xs w-12 text-right select-none">{line.old_line_number || ''}</span>
-              <span className="px-2 text-muted-foreground text-xs w-12 text-right select-none">{line.new_line_number || ''}</span>
-            </>
-          )}
-          <span
+      {(diffResult.diff_lines || []).map((line, idx) => {
+        const oldNum = line.old_line_number ?? null
+        const newNum = line.new_line_number ?? null
+        const displayLineNumber =
+          oldNum !== null && newNum !== null
+            ? oldNum === newNum
+              ? oldNum
+              : `${oldNum}→${newNum}`
+            : oldNum ?? newNum ?? ''
+
+        return (
+          <div
+            key={idx}
             className={cn(
-              'px-2 select-none',
-              line.line_type === DIFF_LINE_TYPE.ADDED && 'text-green-600 dark:text-green-400',
-              line.line_type === DIFF_LINE_TYPE.DELETED && 'text-red-600 dark:text-red-400',
-              line.line_type === DIFF_LINE_TYPE.CONTEXT && 'text-muted-foreground'
+              'flex',
+              line.line_type === DIFF_LINE_TYPE.ADDED && 'bg-green-50 dark:bg-green-950/30',
+              line.line_type === DIFF_LINE_TYPE.DELETED && 'bg-red-50 dark:bg-red-950/30',
+              line.line_type === DIFF_LINE_TYPE.CONTEXT && 'bg-background'
             )}
           >
-          {line.line_type === DIFF_LINE_TYPE.ADDED ? '+' : line.line_type === DIFF_LINE_TYPE.DELETED ? '-' : ' '}
-          </span>
-          <span className="flex-1 whitespace-pre">{line.content}</span>
-        </div>
-      ))}
+            {showLineNumbers && (
+              <span className="px-2 text-muted-foreground text-xs w-16 text-right select-none tabular-nums">{displayLineNumber}</span>
+            )}
+            <span
+              className={cn(
+                'px-2 select-none',
+                line.line_type === DIFF_LINE_TYPE.ADDED && 'text-green-600 dark:text-green-400',
+                line.line_type === DIFF_LINE_TYPE.DELETED && 'text-red-600 dark:text-red-400',
+                line.line_type === DIFF_LINE_TYPE.CONTEXT && 'text-muted-foreground'
+              )}
+            >
+              {line.line_type === DIFF_LINE_TYPE.ADDED ? '+' : line.line_type === DIFF_LINE_TYPE.DELETED ? '-' : ' '}
+            </span>
+            <span className="flex-1 whitespace-pre">{line.content}</span>
+          </div>
+        )
+      })}
     </div>
   )
 }
