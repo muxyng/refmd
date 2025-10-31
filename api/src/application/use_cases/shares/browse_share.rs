@@ -19,15 +19,36 @@ impl<'a, R: SharesRepository + ?Sized> BrowseShare<'a, R> {
         }
         // If token targets a document (not folder), return single node
         if shared_type != "folder" {
-            let items = vec![ShareBrowseTreeItemDto {
-                id: shared_id,
-                title: String::new(),
-                parent_id: None,
-                r#type: "document".into(),
-                created_at: chrono::Utc::now(),
-                updated_at: chrono::Utc::now(),
-            }];
-            return Ok(Some(ShareBrowseResponseDto { tree: items }));
+            let mut tree = Vec::new();
+            let doc_rows = self.repo.list_subtree_nodes(shared_id).await?;
+            if let Some((id, title, typ, _parent_id, created_at, updated_at)) =
+                doc_rows.into_iter().find(|(id, _, _, _, _, _)| *id == shared_id)
+            {
+                tree.push(ShareBrowseTreeItemDto {
+                    id,
+                    title,
+                    parent_id: None,
+                    r#type: typ,
+                    created_at,
+                    updated_at,
+                });
+            } else {
+                let fallback_title = self
+                    .repo
+                    .validate_share_token(token)
+                    .await?
+                    .map(|(_, _, _, title)| title)
+                    .unwrap_or_default();
+                tree.push(ShareBrowseTreeItemDto {
+                    id: shared_id,
+                    title: fallback_title,
+                    parent_id: None,
+                    r#type: shared_type.clone(),
+                    created_at: chrono::Utc::now(),
+                    updated_at: chrono::Utc::now(),
+                });
+            }
+            return Ok(Some(ShareBrowseResponseDto { tree }));
         }
         // Folder: list subtree and filter to materialized shares under this folder share
         let rows = self.repo.list_subtree_nodes(shared_id).await?;
