@@ -10,7 +10,6 @@ import { Alert, AlertDescription } from '@/shared/ui/alert'
 import { Button } from '@/shared/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/shared/ui/dialog'
 import { DiffViewer } from '@/shared/ui/diff-viewer'
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/shared/ui/resizable'
 import { ScrollArea } from '@/shared/ui/scroll-area'
 
 import { documentKeys, downloadSnapshot, snapshotDiffQuery, triggerSnapshotRestore, useDocumentSnapshots } from '@/entities/document'
@@ -120,9 +119,8 @@ export function SnapshotHistoryDialog({ documentId, open, onOpenChange, token, c
           </DialogTitle>
         </DialogHeader>
         <div className="flex-1 overflow-hidden">
-          <ResizablePanelGroup direction="horizontal" className="h-full">
-            <ResizablePanel defaultSize={28} minSize={20} maxSize={40}>
-              <div className="flex flex-col h-full min-h-0 border-r">
+          <div className="flex h-full min-w-0">
+            <div className="w-[28%] min-w-[220px] max-w-[340px] flex flex-col h-full min-h-0 border-r">
                 <div className="px-4 py-3 border-b">
                   <h3 className="text-sm font-medium flex items-center gap-2">
                     <HistoryIcon className="h-4 w-4 text-muted-foreground" />
@@ -131,7 +129,7 @@ export function SnapshotHistoryDialog({ documentId, open, onOpenChange, token, c
                   <p className="text-xs text-muted-foreground mt-1">Select a snapshot to review changes.</p>
                 </div>
                 <ScrollArea className="flex-1 min-h-0">
-                  <div className="p-4 space-y-3">
+                  <div className="p-4 space-y-3 min-w-0">
                     {isLoading && (
                       <div className="flex justify-center items-center py-6 text-sm text-muted-foreground">
                         Loading snapshots…
@@ -154,30 +152,27 @@ export function SnapshotHistoryDialog({ documentId, open, onOpenChange, token, c
                           key={snapshot.id}
                           onClick={() => setSelectedId(snapshot.id)}
                           className={cn(
-                            'w-full text-left border rounded-lg p-3 transition-colors backdrop-blur-sm',
+                            'w-full text-left border rounded-lg p-3 transition-colors backdrop-blur-sm overflow-hidden',
                             isActive ? 'bg-accent border-accent-foreground/20' : 'hover:bg-accent/40'
                           )}
                         >
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-sm font-medium truncate">{snapshot.label}</span>
+                          <div className="flex items-center justify-between gap-2 min-w-0">
+                            <span className="text-sm font-medium block min-w-0 max-w-full break-words">{snapshot.label}</span>
                           </div>
-                          <div className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
+                          <div className="text-xs text-muted-foreground mt-1 flex items-center gap-1 min-w-0">
                             <Clock className="h-3 w-3" />
                             {formatRelative(snapshot.created_at)}
                           </div>
                           {snapshot.notes && snapshot.notes.trim().length > 0 && (
-                            <div className="mt-2 text-xs text-muted-foreground/80 line-clamp-3">{snapshot.notes}</div>
+                            <div className="mt-2 text-xs text-muted-foreground/80 line-clamp-3 break-words">{snapshot.notes}</div>
                           )}
                         </button>
                       )
                     })}
                   </div>
                 </ScrollArea>
-              </div>
-            </ResizablePanel>
-            <ResizableHandle withHandle />
-            <ResizablePanel defaultSize={72}>
-              <div className="h-full flex flex-col min-h-0">
+            </div>
+            <div className="flex-1 min-w-0 h-full flex flex-col">
                 <div className="px-6 py-4 border-b flex flex-wrap items-start justify-between gap-3">
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
@@ -278,8 +273,8 @@ export function SnapshotHistoryDialog({ documentId, open, onOpenChange, token, c
                     </Button>
                   </div>
                 </div>
-                <ScrollArea className="flex-1 min-h-0">
-                  <div className="p-6">
+                <ScrollArea className="flex-1 min-h-0 min-w-0">
+                  <div className="p-6 min-w-0">
                     {diffQuery.isLoading && (
                       <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
                         Loading diff…
@@ -300,9 +295,8 @@ export function SnapshotHistoryDialog({ documentId, open, onOpenChange, token, c
                     )}
                   </div>
                 </ScrollArea>
-              </div>
-            </ResizablePanel>
-          </ResizablePanelGroup>
+            </div>
+          </div>
         </div>
       </DialogContent>
     </Dialog>
@@ -321,7 +315,13 @@ function SnapshotDiffViewer({ diff, viewMode }: { diff: SnapshotDiffResponse; vi
         <span>Comparing to: {baseLabel}</span>
         <span>{diffResult.diff_lines.length} lines</span>
       </div>
-      <DiffViewer diffResult={diffResult} viewMode={viewMode} />
+      <div className="flex-1 min-h-0 min-w-0">
+        <div className="h-full w-full overflow-auto">
+          <div className="min-w-full">
+            <DiffViewer diffResult={diffResult} viewMode={viewMode} />
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
