@@ -1,8 +1,9 @@
 import { createFileRoute, useNavigate, useParams } from '@tanstack/react-router'
-import { History } from 'lucide-react'
+import { Download, History } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { toast } from 'sonner'
 
-import { fetchDocumentMeta } from '@/entities/document'
+import { downloadDocumentArchive, fetchDocumentMeta } from '@/entities/document'
 import { buildCanonicalUrl, buildOgImageUrl } from '@/entities/public'
 
 import { documentBeforeLoadGuard, useAuthContext } from '@/features/auth'
@@ -17,6 +18,7 @@ import RoutePending from '@/widgets/routes/RoutePending'
 import SecondaryViewer from '@/widgets/secondary-viewer/SecondaryViewer'
 
 import { useCollaborativeDocument, useRealtime } from '@/processes/collaboration'
+import type { DocumentHeaderAction } from '@/processes/collaboration/contexts/realtime-context'
 
 export type DocumentRouteSearch = {
   token?: string
@@ -145,6 +147,7 @@ function DocumentClient({
   const { showBacklinks, setShowBacklinks } = useViewContext()
   const { status, doc, awareness, isReadOnly, error: realtimeError } = useCollaborativeDocument(id, shareToken)
   const { documentTitle: realtimeTitle, documentActions, setDocumentActions } = useRealtime()
+  const hasDoc = Boolean(doc)
   const redirecting = usePluginDocumentRedirect(id, {
     navigate: (to) => navigate({ to }),
   })
@@ -168,30 +171,66 @@ function DocumentClient({
     setShowBacklinks(false)
   }, [id, setShowBacklinks])
 
+  const loaderTitle = loaderData?.title
+  const resolvedTitle = (realtimeTitle && realtimeTitle.trim()) || loaderTitle
+
+  const triggerDownload = useCallback(async () => {
+    if (!hasDoc) return
+    try {
+      const filename = await downloadDocumentArchive(id, {
+        token: shareToken,
+        title: resolvedTitle,
+      })
+      toast.success(`Download ready: ${filename}`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to download document'
+      toast.error(message)
+    }
+  }, [hasDoc, id, shareToken, resolvedTitle])
+
   useEffect(() => {
-    const snapshotId = 'snapshot-history'
+    const ensureAction = (
+      list: DocumentHeaderAction[],
+      action: DocumentHeaderAction,
+    ): DocumentHeaderAction[] => {
+      const existing = list.find((item) => item.id === action.id)
+      if (!existing) {
+        return [...list, action]
+      }
+      if (
+        existing.onSelect !== action.onSelect ||
+        existing.disabled !== action.disabled ||
+        existing.label !== action.label
+      ) {
+        return list.map((item) => (item.id === action.id ? action : item))
+      }
+      return list
+    }
+
     const actions = documentActions ?? []
-    const snapshotAction = {
-      id: snapshotId,
+    const snapshotAction: DocumentHeaderAction = {
+      id: 'snapshot-history',
       label: 'Snapshots',
       onSelect: openSnapshots,
-      disabled: !doc,
-      icon: <History className="h-[18px] w-[18px]" />,
+      disabled: !hasDoc,
+      icon: <History className="h-4 w-4" />,
       tooltip: 'Snapshot history',
     }
-    const existing = actions.find((action) => action.id === snapshotId)
-    if (!existing) {
-      setDocumentActions([...actions, snapshotAction])
-      return
+    const downloadAction: DocumentHeaderAction = {
+      id: 'download-document',
+      label: 'Download',
+      onSelect: triggerDownload,
+      disabled: !hasDoc,
+      icon: <Download className="h-4 w-4" />,
+      tooltip: 'Download document',
     }
-    if (
-      existing.onSelect !== snapshotAction.onSelect ||
-      existing.disabled !== snapshotAction.disabled ||
-      existing.label !== snapshotAction.label
-    ) {
-      setDocumentActions(actions.map((action) => (action.id === snapshotId ? snapshotAction : action)))
+
+    let next = ensureAction(actions, snapshotAction)
+    next = ensureAction(next, downloadAction)
+    if (next !== actions) {
+      setDocumentActions(next)
     }
-  }, [documentActions, setDocumentActions, openSnapshots, doc])
+  }, [documentActions, setDocumentActions, openSnapshots, hasDoc, triggerDownload])
 
   useEffect(() => {
     if (showBacklinks && showSecondaryViewer) {
