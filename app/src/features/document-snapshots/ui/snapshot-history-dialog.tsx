@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/shared/ui/di
 import { DiffViewer } from '@/shared/ui/diff-viewer'
 import { ScrollArea } from '@/shared/ui/scroll-area'
 
+import { useIsMobile } from '@/shared/hooks/use-mobile'
 import { documentKeys, downloadSnapshot, snapshotDiffQuery, triggerSnapshotRestore, useDocumentSnapshots } from '@/entities/document'
 
 type SnapshotHistoryDialogProps = {
@@ -29,6 +30,8 @@ export function SnapshotHistoryDialog({ documentId, open, onOpenChange, token, c
   const [viewMode, setViewMode] = useState<'unified' | 'split'>('unified')
   const [compareBase, setCompareBase] = useState<'previous' | 'current'>('previous')
   const queryClient = useQueryClient()
+  const isMobile = useIsMobile()
+  const [mobileView, setMobileView] = useState<'list' | 'detail'>('list')
 
   useEffect(() => {
     if (!open) {
@@ -68,6 +71,23 @@ export function SnapshotHistoryDialog({ documentId, open, onOpenChange, token, c
     }
   }, [compareBase, hasPreviousSnapshot])
 
+  useEffect(() => {
+    if (!open) {
+      setMobileView('list')
+      return
+    }
+    if (!isMobile) {
+      setMobileView('list')
+    }
+  }, [open, isMobile])
+
+  useEffect(() => {
+    if (!isMobile) return
+    if (!selectedSnapshotId) {
+      setMobileView('list')
+    }
+  }, [isMobile, selectedSnapshotId])
+
   const baseParam =
     compareBase === 'previous' ? 'previous' : 'current'
 
@@ -80,6 +100,13 @@ export function SnapshotHistoryDialog({ documentId, open, onOpenChange, token, c
     ...diffQueryOptions,
     enabled: Boolean(selectedSnapshotId),
   })
+
+  const handleSelectSnapshot = (snapshotId: string) => {
+    setSelectedId(snapshotId)
+    if (isMobile) {
+      setMobileView('detail')
+    }
+  }
 
   const restoreMutation = useMutation({
     mutationFn: (snapshot: SnapshotSummary) =>
@@ -109,6 +136,182 @@ export function SnapshotHistoryDialog({ documentId, open, onOpenChange, token, c
 
   const diffData = diffQuery.data ?? null
 
+  const historyListContent = (
+    <div className="flex h-full flex-col">
+      <div className="border-b px-4 py-3">
+        <h3 className="flex items-center gap-2 text-sm font-medium">
+          <HistoryIcon className="h-4 w-4 text-muted-foreground" />
+          History
+        </h3>
+        <p className="mt-1 text-xs text-muted-foreground">Select a snapshot to review changes.</p>
+      </div>
+      <ScrollArea className={cn('flex-1 min-h-0', isMobile ? 'max-h-[65vh]' : 'max-h-none')}>
+        <div className="min-w-0 space-y-3 p-4">
+          {isLoading && (
+            <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">
+              Loading snapshots…
+            </div>
+          )}
+          {error && !isLoading && (
+            <Alert variant="destructive">
+              <AlertDescription>Failed to load snapshots.</AlertDescription>
+            </Alert>
+          )}
+          {!isLoading && !error && snapshots.length === 0 && (
+            <div className="py-6 text-center text-sm text-muted-foreground">No snapshots available yet</div>
+          )}
+          {snapshots.map((snapshot) => {
+            const isActive = selectedSnapshotId === snapshot.id
+            return (
+              <button
+                key={snapshot.id}
+                onClick={() => handleSelectSnapshot(snapshot.id)}
+                className={cn(
+                  'w-full overflow-hidden rounded-lg border p-3 text-left backdrop-blur-sm transition-colors',
+                  isActive ? 'border-accent-foreground/20 bg-accent' : 'hover:bg-accent/40',
+                )}
+              >
+                <div className="flex min-w-0 items-center justify-between gap-2">
+                  <span className="block max-w-full min-w-0 text-sm font-medium">{snapshot.label}</span>
+                </div>
+                <div className="mt-1 flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+                  <Clock className="h-3 w-3" />
+                  {formatRelative(snapshot.created_at)}
+                </div>
+                {snapshot.notes && snapshot.notes.trim().length > 0 && (
+                  <div className="mt-2 line-clamp-3 text-xs text-muted-foreground/80">{snapshot.notes}</div>
+                )}
+              </button>
+            )
+          })}
+        </div>
+      </ScrollArea>
+    </div>
+  )
+
+  const detailContent = (
+    <div className="flex h-full min-w-0 flex-col">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b px-6 py-4">
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <h3 className="truncate text-lg font-semibold">{selectedSnapshot?.label ?? 'Snapshot'}</h3>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+            {selectedSnapshot ? (
+              <>
+                <span className="flex items-center gap-1">
+                  <Clock className="h-3 w-3" />
+                  {formatRelative(selectedSnapshot.created_at)}
+                </span>
+                <span>{formatBytes(selectedSnapshot.byte_size)}</span>
+                {selectedSnapshot.notes && (
+                  <span className="max-w-[320px] truncate">{selectedSnapshot.notes}</span>
+                )}
+              </>
+            ) : (
+              <span>Select a snapshot to review</span>
+            )}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <div className="flex items-center gap-1">
+            <Button
+              variant={compareBase === 'previous' ? 'secondary' : 'ghost'}
+              size="sm"
+              className="h-8 px-3 text-xs"
+              disabled={!hasPreviousSnapshot}
+              onClick={() => setCompareBase('previous')}
+            >
+              Prev Snapshot
+            </Button>
+            <Button
+              variant={compareBase === 'current' ? 'secondary' : 'ghost'}
+              size="sm"
+              className="h-8 px-3 text-xs"
+              onClick={() => setCompareBase('current')}
+            >
+              Current Document
+            </Button>
+          </div>
+          <div className="flex items-center gap-1">
+            <Button
+              variant={viewMode === 'unified' ? 'secondary' : 'ghost'}
+              size="sm"
+              className="h-8 px-3 text-xs"
+              onClick={() => setViewMode('unified')}
+            >
+              <AlignLeft className="mr-1 h-3 w-3" />
+              Unified
+            </Button>
+            <Button
+              variant={viewMode === 'split' ? 'secondary' : 'ghost'}
+              size="sm"
+              className="h-8 px-3 text-xs"
+              onClick={() => setViewMode('split')}
+            >
+              <Columns2 className="mr-1 h-3 w-3" />
+              Split
+            </Button>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 px-3 text-xs"
+            disabled={!selectedSnapshot || downloadMutation.isPending}
+            onClick={() => selectedSnapshot && downloadMutation.mutate(selectedSnapshot)}
+          >
+            {downloadMutation.isPending ? (
+              'Downloading…'
+            ) : (
+              <span className="flex items-center gap-1">
+                <DownloadCloud className="h-3 w-3" />
+                Download
+              </span>
+            )}
+          </Button>
+          <Button
+            variant="default"
+            size="sm"
+            className="h-8 px-3 text-xs"
+            disabled={!canRestore || !selectedSnapshot || restoreMutation.isPending}
+            onClick={() => selectedSnapshot && restoreMutation.mutate(selectedSnapshot)}
+          >
+            {restoreMutation.isPending ? (
+              'Restoring…'
+            ) : (
+              <span className="flex items-center gap-1">
+                <RotateCcw className="h-3 w-3" />
+                Restore
+              </span>
+            )}
+          </Button>
+        </div>
+      </div>
+      <ScrollArea className="flex-1 min-h-0 min-w-0">
+        <div className="min-w-0 p-6">
+          {diffQuery.isLoading && (
+            <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
+              Loading diff…
+            </div>
+          )}
+          {diffQuery.error && !diffQuery.isLoading && (
+            <Alert variant="destructive">
+              <AlertDescription>Failed to load diff.</AlertDescription>
+            </Alert>
+          )}
+          {!diffQuery.isLoading && !diffQuery.error && diffData && (
+            <SnapshotDiffViewer diff={diffData} viewMode={viewMode} />
+          )}
+          {!diffQuery.isLoading && !diffQuery.error && !diffData && (
+            <div className="py-12 text-center text-sm text-muted-foreground">
+              Select a snapshot to view changes.
+            </div>
+          )}
+        </div>
+      </ScrollArea>
+    </div>
+  )
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className={cn('sm:max-w-[85vw] max-w-[95vw] h-[90vh] p-0 flex flex-col', overlayPanelClass)}>
@@ -119,184 +322,43 @@ export function SnapshotHistoryDialog({ documentId, open, onOpenChange, token, c
           </DialogTitle>
         </DialogHeader>
         <div className="flex-1 overflow-hidden">
-          <div className="flex h-full min-w-0">
-            <div className="w-[28%] min-w-[220px] max-w-[340px] flex flex-col h-full min-h-0 border-r">
-                <div className="px-4 py-3 border-b">
-                  <h3 className="text-sm font-medium flex items-center gap-2">
-                    <HistoryIcon className="h-4 w-4 text-muted-foreground" />
-                    History
-                  </h3>
-                  <p className="text-xs text-muted-foreground mt-1">Select a snapshot to review changes.</p>
-                </div>
-                <ScrollArea className="flex-1 min-h-0">
-                  <div className="p-4 space-y-3 min-w-0">
-                    {isLoading && (
-                      <div className="flex justify-center items-center py-6 text-sm text-muted-foreground">
-                        Loading snapshots…
-                      </div>
-                    )}
-                    {error && !isLoading && (
-                      <Alert variant="destructive">
-                        <AlertDescription>Failed to load snapshots.</AlertDescription>
-                      </Alert>
-                    )}
-                    {!isLoading && !error && snapshots.length === 0 && (
-                      <div className="text-center py-6 text-sm text-muted-foreground">
-                        No snapshots available yet
-                      </div>
-                    )}
-                    {snapshots.map((snapshot) => {
-                      const isActive = selectedSnapshotId === snapshot.id
-                      return (
-                        <button
-                          key={snapshot.id}
-                          onClick={() => setSelectedId(snapshot.id)}
-                          className={cn(
-                            'w-full text-left border rounded-lg p-3 transition-colors backdrop-blur-sm overflow-hidden',
-                            isActive ? 'bg-accent border-accent-foreground/20' : 'hover:bg-accent/40'
-                          )}
-                        >
-                          <div className="flex items-center justify-between gap-2 min-w-0">
-                            <span className="text-sm font-medium block min-w-0 max-w-full break-words">{snapshot.label}</span>
-                          </div>
-                          <div className="text-xs text-muted-foreground mt-1 flex items-center gap-1 min-w-0">
-                            <Clock className="h-3 w-3" />
-                            {formatRelative(snapshot.created_at)}
-                          </div>
-                          {snapshot.notes && snapshot.notes.trim().length > 0 && (
-                            <div className="mt-2 text-xs text-muted-foreground/80 line-clamp-3 break-words">{snapshot.notes}</div>
-                          )}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </ScrollArea>
-            </div>
-            <div className="flex-1 min-w-0 h-full flex flex-col">
-                <div className="px-6 py-4 border-b flex flex-wrap items-start justify-between gap-3">
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-lg font-semibold truncate">
-                        {selectedSnapshot?.label ?? 'Snapshot'}
-                      </h3>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
-                      {selectedSnapshot ? (
-                        <>
-                          <span className="flex items-center gap-1">
-                            <Clock className="h-3 w-3" />
-                            {formatRelative(selectedSnapshot.created_at)}
-                          </span>
-                          <span>{formatBytes(selectedSnapshot.byte_size)}</span>
-                          {selectedSnapshot.notes && (
-                            <span className="truncate max-w-[320px]">
-                              {selectedSnapshot.notes}
-                            </span>
-                          )}
-                        </>
-                      ) : (
-                        <span>Select a snapshot to review</span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex items-center flex-wrap gap-2 justify-end">
-                    <div className="flex items-center gap-1">
+          {isMobile ? (
+            <div className="flex h-full flex-col">
+              {mobileView === 'list' && (
+                <>
+                  {historyListContent}
+                  {selectedSnapshot && (
+                    <div className="border-t px-4 py-3">
                       <Button
-                        variant={compareBase === 'previous' ? 'secondary' : 'ghost'}
-                        size="sm"
-                        className="h-8 px-3 text-xs"
-                        disabled={!hasPreviousSnapshot}
-                        onClick={() => setCompareBase('previous')}
+                        className="w-full"
+                        variant="secondary"
+                        onClick={() => setMobileView('detail')}
                       >
-                        Prev Snapshot
-                      </Button>
-                      <Button
-                        variant={compareBase === 'current' ? 'secondary' : 'ghost'}
-                        size="sm"
-                        className="h-8 px-3 text-xs"
-                        onClick={() => setCompareBase('current')}
-                      >
-                        Current Document
+                        View snapshot details
                       </Button>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        variant={viewMode === 'unified' ? 'secondary' : 'ghost'}
-                        size="sm"
-                        className="h-8 px-3 text-xs"
-                        onClick={() => setViewMode('unified')}
-                      >
-                        <AlignLeft className="h-3 w-3 mr-1" />
-                        Unified
-                      </Button>
-                      <Button
-                        variant={viewMode === 'split' ? 'secondary' : 'ghost'}
-                        size="sm"
-                        className="h-8 px-3 text-xs"
-                        onClick={() => setViewMode('split')}
-                      >
-                        <Columns2 className="h-3 w-3 mr-1" />
-                        Split
-                      </Button>
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-8 px-3 text-xs"
-                      disabled={!selectedSnapshot || downloadMutation.isPending}
-                      onClick={() => selectedSnapshot && downloadMutation.mutate(selectedSnapshot)}
-                    >
-                      {downloadMutation.isPending ? (
-                        'Downloading…'
-                      ) : (
-                        <span className="flex items-center gap-1">
-                          <DownloadCloud className="h-3 w-3" />
-                          Download
-                        </span>
-                      )}
-                    </Button>
-                    <Button
-                      variant="default"
-                      size="sm"
-                      className="h-8 px-3 text-xs"
-                      disabled={!canRestore || !selectedSnapshot || restoreMutation.isPending}
-                      onClick={() => selectedSnapshot && restoreMutation.mutate(selectedSnapshot)}
-                    >
-                      {restoreMutation.isPending ? (
-                        'Restoring…'
-                      ) : (
-                        <span className="flex items-center gap-1">
-                          <RotateCcw className="h-3 w-3" />
-                          Restore
-                        </span>
-                      )}
+                  )}
+                </>
+              )}
+              {mobileView === 'detail' && (
+                <div className="flex h-full flex-col">
+                  <div className="border-b px-4 py-3">
+                    <Button variant="ghost" size="sm" onClick={() => setMobileView('list')}>
+                      ← Back to history
                     </Button>
                   </div>
+                  {detailContent}
                 </div>
-                <ScrollArea className="flex-1 min-h-0 min-w-0">
-                  <div className="p-6 min-w-0">
-                    {diffQuery.isLoading && (
-                      <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
-                        Loading diff…
-                      </div>
-                    )}
-                    {diffQuery.error && !diffQuery.isLoading && (
-                      <Alert variant="destructive">
-                        <AlertDescription>Failed to load diff.</AlertDescription>
-                      </Alert>
-                    )}
-                    {!diffQuery.isLoading && !diffQuery.error && diffData && (
-                      <SnapshotDiffViewer diff={diffData} viewMode={viewMode} />
-                    )}
-                    {!diffQuery.isLoading && !diffQuery.error && !diffData && (
-                      <div className="text-center py-12 text-sm text-muted-foreground">
-                        Select a snapshot to view changes.
-                      </div>
-                    )}
-                  </div>
-                </ScrollArea>
+              )}
             </div>
-          </div>
+          ) : (
+            <div className="flex h-full min-w-0 flex-row">
+              <div className="w-[28%] min-w-[220px] max-w-[340px] border-r">
+                {historyListContent}
+              </div>
+              <div className="flex h-full flex-1 flex-col">{detailContent}</div>
+            </div>
+          )}
         </div>
       </DialogContent>
     </Dialog>
@@ -310,14 +372,14 @@ function SnapshotDiffViewer({ diff, viewMode }: { diff: SnapshotDiffResponse; vi
   const diffResult = diff.diff
 
   return (
-    <div className="h-full flex flex-col rounded-lg border bg-background/80 backdrop-blur-sm shadow-sm">
+    <div className="flex h-full w-full flex-col rounded-lg border bg-background/80 backdrop-blur-sm shadow-sm">
       <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/40 text-xs text-muted-foreground">
         <span>Comparing to: {baseLabel}</span>
         <span>{diffResult.diff_lines.length} lines</span>
       </div>
       <div className="flex-1 min-h-0 min-w-0">
         <div className="h-full w-full overflow-auto">
-          <div className="min-w-full">
+          <div className="w-full">
             <DiffViewer diffResult={diffResult} viewMode={viewMode} />
           </div>
         </div>

@@ -28,7 +28,7 @@ export function DiffViewer({ diffResult, viewMode = 'unified', showLineNumbers =
 
 function UnifiedDiffView({ diffResult, showLineNumbers, className }: { diffResult: DocumentDiffResult; showLineNumbers: boolean; className?: string }) {
   return (
-    <div className={cn('font-mono text-sm overflow-x-auto', className)}>
+    <div className={cn('font-mono text-sm overflow-x-auto max-w-full', className)}>
       {(diffResult.diff_lines || []).map((line, idx) => {
         const oldNum = line.old_line_number ?? null
         const newNum = line.new_line_number ?? null
@@ -62,7 +62,7 @@ function UnifiedDiffView({ diffResult, showLineNumbers, className }: { diffResul
             >
               {line.line_type === DIFF_LINE_TYPE.ADDED ? '+' : line.line_type === DIFF_LINE_TYPE.DELETED ? '-' : ' '}
             </span>
-            <span className="flex-1 whitespace-pre-wrap break-words">{line.content}</span>
+            <span className="flex-1 whitespace-pre-wrap break-all md:break-words">{line.content}</span>
           </div>
         )
       })}
@@ -111,7 +111,7 @@ function SplitDiffView({ diffResult, showLineNumbers, className }: { diffResult:
   }
 
   return (
-    <div className={cn('font-mono text-sm overflow-x-auto', className)}>
+    <div className={cn('font-mono text-sm overflow-x-auto max-w-full', className)}>
       <div className="flex">
         <div className="flex-1 border-r overflow-x-auto">
           {processed.map((pair, idx) => (
@@ -132,7 +132,7 @@ function SplitDiffView({ diffResult, showLineNumbers, className }: { diffResult:
                   <span className={cn('px-2 select-none', pair.old.line_type === DIFF_LINE_TYPE.DELETED && 'text-red-600 dark:text-red-400', pair.old.line_type === DIFF_LINE_TYPE.CONTEXT && 'text-muted-foreground')}>
                     {pair.old.line_type === DIFF_LINE_TYPE.DELETED ? '-' : ' '}
                   </span>
-                  <span className="flex-1 whitespace-pre-wrap break-words">{pair.old.content}</span>
+                  <span className="flex-1 whitespace-pre-wrap break-all md:break-words">{pair.old.content}</span>
                 </>
               )}
             </div>
@@ -157,7 +157,7 @@ function SplitDiffView({ diffResult, showLineNumbers, className }: { diffResult:
                   <span className={cn('px-2 select-none', pair.new.line_type === DIFF_LINE_TYPE.ADDED && 'text-green-600 dark:text-green-400', pair.new.line_type === DIFF_LINE_TYPE.CONTEXT && 'text-muted-foreground')}>
                     {pair.new.line_type === DIFF_LINE_TYPE.ADDED ? '+' : ' '}
                   </span>
-                  <span className="flex-1 whitespace-pre-wrap break-words">{pair.new.content}</span>
+                  <span className="flex-1 whitespace-pre-wrap break-all md:break-words">{pair.new.content}</span>
                 </>
               )}
             </div>
