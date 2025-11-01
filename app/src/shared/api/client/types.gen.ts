@@ -350,19 +350,18 @@ export type ShareItem = {
 
 export type SnapshotDiffBaseParam = 'auto' | 'current' | 'previous';
 
-export type SnapshotDiffBaseResponse = {
-    kind: SnapshotDiffKind;
-    markdown: string;
-    snapshot?: ((SnapshotSummary) | null);
-};
-
 export type SnapshotDiffKind = 'current' | 'snapshot';
 
 export type SnapshotDiffResponse = {
-    base: SnapshotDiffBaseResponse;
+    base: SnapshotDiffSideResponse;
     diff: DocumentDiffResult;
-    target: SnapshotSummary;
-    target_markdown: string;
+    target: SnapshotDiffSideResponse;
+};
+
+export type SnapshotDiffSideResponse = {
+    kind: SnapshotDiffKind;
+    markdown: string;
+    snapshot?: ((SnapshotSummary) | null);
 };
 
 export type SnapshotListResponse = {

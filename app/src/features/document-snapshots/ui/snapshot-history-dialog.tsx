@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
 import type { SnapshotDiffResponse, SnapshotSummary } from '@/shared/api'
+import { useIsMobile } from '@/shared/hooks/use-mobile'
 import { overlayPanelClass } from '@/shared/lib/overlay-classes'
 import { cn } from '@/shared/lib/utils'
 import { Alert, AlertDescription } from '@/shared/ui/alert'
@@ -12,7 +13,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/shared/ui/di
 import { DiffViewer } from '@/shared/ui/diff-viewer'
 import { ScrollArea } from '@/shared/ui/scroll-area'
 
-import { useIsMobile } from '@/shared/hooks/use-mobile'
 import { documentKeys, downloadSnapshot, snapshotDiffQuery, triggerSnapshotRestore, useDocumentSnapshots } from '@/entities/document'
 
 type SnapshotHistoryDialogProps = {
@@ -366,15 +366,14 @@ export function SnapshotHistoryDialog({ documentId, open, onOpenChange, token, c
 }
 
 function SnapshotDiffViewer({ diff, viewMode }: { diff: SnapshotDiffResponse; viewMode: 'unified' | 'split' }) {
-  const baseLabel = diff.base.kind === 'snapshot' && diff.base.snapshot
-    ? diff.base.snapshot.label || 'Snapshot'
-    : 'Current document'
+  const sourceLabel = diffSideLabel(diff.base)
+  const destinationLabel = diffSideLabel(diff.target)
   const diffResult = diff.diff
 
   return (
     <div className="flex h-full w-full flex-col rounded-lg border bg-background/80 backdrop-blur-sm shadow-sm">
       <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/40 text-xs text-muted-foreground">
-        <span>Comparing to: {baseLabel}</span>
+        <span>{`${sourceLabel} -> ${destinationLabel}`}</span>
         <span>{diffResult.diff_lines.length} lines</span>
       </div>
       <div className="flex-1 min-h-0 min-w-0">
@@ -387,6 +386,22 @@ function SnapshotDiffViewer({ diff, viewMode }: { diff: SnapshotDiffResponse; vi
     </div>
   )
 }
+
+function snapshotLabel(snapshot?: SnapshotSummary | null): string {
+  if (!snapshot) {
+    return 'Snapshot'
+  }
+  const label = snapshot.label?.trim()
+  return label && label.length > 0 ? label : 'Snapshot'
+}
+
+function diffSideLabel(side: SnapshotDiffResponse['base']): string {
+  if (side.kind === 'current') {
+    return 'Current document'
+  }
+  return snapshotLabel(side.snapshot ?? null)
+}
+
 function formatRelative(date: string): string {
   const target = new Date(date)
   const now = Date.now()

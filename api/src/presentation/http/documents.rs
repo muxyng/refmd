@@ -94,7 +94,7 @@ pub enum SnapshotDiffKind {
 }
 
 #[derive(Debug, Serialize, ToSchema)]
-pub struct SnapshotDiffBaseResponse {
+pub struct SnapshotDiffSideResponse {
     pub kind: SnapshotDiffKind,
     pub markdown: String,
     pub snapshot: Option<SnapshotSummary>,
@@ -102,9 +102,8 @@ pub struct SnapshotDiffBaseResponse {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct SnapshotDiffResponse {
-    pub target: SnapshotSummary,
-    pub target_markdown: String,
-    pub base: SnapshotDiffBaseResponse,
+    pub base: SnapshotDiffSideResponse,
+    pub target: SnapshotDiffSideResponse,
     pub diff: DocumentDiffResult,
 }
 
@@ -148,6 +147,21 @@ fn snapshot_summary_from(record: SnapshotArchiveRecord) -> SnapshotSummary {
         created_by: record.created_by,
         byte_size: record.byte_size,
         content_hash: record.content_hash,
+    }
+}
+
+fn snapshot_diff_side_response_from(side: SnapshotDiffBase) -> SnapshotDiffSideResponse {
+    match side {
+        SnapshotDiffBase::Current { markdown } => SnapshotDiffSideResponse {
+            kind: SnapshotDiffKind::Current,
+            markdown,
+            snapshot: None,
+        },
+        SnapshotDiffBase::Snapshot { record, markdown } => SnapshotDiffSideResponse {
+            kind: SnapshotDiffKind::Snapshot,
+            markdown,
+            snapshot: Some(snapshot_summary_from(record)),
+        },
     }
 }
 
@@ -681,26 +695,10 @@ pub async fn get_document_snapshot_diff(
         .ok_or(StatusCode::NOT_FOUND)?;
 
     let diff = DocumentDiffResult::from(result.diff);
-    let target = snapshot_summary_from(result.target);
-    let base = match result.base {
-        SnapshotDiffBase::Current { markdown } => SnapshotDiffBaseResponse {
-            kind: SnapshotDiffKind::Current,
-            markdown,
-            snapshot: None,
-        },
-        SnapshotDiffBase::Snapshot { record, markdown } => SnapshotDiffBaseResponse {
-            kind: SnapshotDiffKind::Snapshot,
-            markdown,
-            snapshot: Some(snapshot_summary_from(record)),
-        },
-    };
+    let base = snapshot_diff_side_response_from(result.base);
+    let target = snapshot_diff_side_response_from(result.target);
 
-    Ok(Json(SnapshotDiffResponse {
-        target,
-        target_markdown: result.target_markdown,
-        base,
-        diff,
-    }))
+    Ok(Json(SnapshotDiffResponse { base, target, diff }))
 }
 
 #[utoipa::path(

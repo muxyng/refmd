@@ -97,7 +97,7 @@ use utoipa::OpenApi;
         documents::SnapshotSummary,
         documents::SnapshotListResponse,
         documents::SnapshotDiffKind,
-        documents::SnapshotDiffBaseResponse,
+        documents::SnapshotDiffSideResponse,
         documents::SnapshotDiffResponse,
         documents::SnapshotDiffBaseParam,
         documents::SnapshotRestoreResponse,

@@ -3,9 +3,9 @@ import { GitCommit as GitCommitIcon, RefreshCw, User, Clock, AlignLeft, Columns2
 import React from 'react'
 
 import type { GitCommitItem, DocumentDiffResult, DocumentDiffLineType } from '@/shared/api'
+import { useIsMobile } from '@/shared/hooks/use-mobile'
 import { overlayPanelClass } from '@/shared/lib/overlay-classes'
 import { cn } from '@/shared/lib/utils'
-import { useIsMobile } from '@/shared/hooks/use-mobile'
 import { Alert, AlertDescription } from '@/shared/ui/alert'
 import { Button } from '@/shared/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/shared/ui/dialog'
