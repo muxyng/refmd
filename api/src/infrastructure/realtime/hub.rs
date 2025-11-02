@@ -1,5 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::Context;
@@ -10,9 +11,11 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::time::{Duration, Instant, sleep};
 use uuid::Uuid;
 use yrs::GetString;
+use yrs::block::ClientID;
 use yrs::encoding::write::Write as YWrite;
+use yrs::sync::awareness::AwarenessUpdate;
 use yrs::sync::protocol::{MSG_SYNC, MSG_SYNC_UPDATE};
-use yrs::sync::{DefaultProtocol, Protocol};
+use yrs::sync::{DefaultProtocol, Error as SyncError, Protocol};
 use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::{Encoder, EncoderV1};
 use yrs::{Doc, ReadTxn, StateVector, Text, Transact, Update};
@@ -465,24 +468,60 @@ impl Hub {
         let effective_can_edit = can_edit && edit_flag.load(Ordering::Relaxed);
         let guarded_stream =
             wrap_stream_with_edit_guard(stream, doc_id.to_string(), edit_flag.clone());
-        let subscription = if effective_can_edit {
-            room.broadcast.subscribe(sink.clone(), guarded_stream)
+        let tracked_clients: Arc<StdMutex<HashMap<ClientID, u32>>> =
+            Arc::new(StdMutex::new(HashMap::new()));
+        let awareness = room.awareness.clone();
+        let result = if effective_can_edit {
+            let subscription = room.broadcast.subscribe_with(
+                sink.clone(),
+                guarded_stream,
+                TrackingProtocol::new(DefaultProtocol, tracked_clients.clone()),
+            );
+            Self::send_protocol_start(sink.clone(), awareness.clone(), DefaultProtocol).await?;
+            subscription.completed().await
         } else {
-            room.broadcast
-                .subscribe_with(sink.clone(), guarded_stream, ReadOnlyProtocol)
+            let subscription = room.broadcast.subscribe_with(
+                sink.clone(),
+                guarded_stream,
+                TrackingProtocol::new(ReadOnlyProtocol, tracked_clients.clone()),
+            );
+            Self::send_protocol_start(sink.clone(), awareness.clone(), ReadOnlyProtocol).await?;
+            subscription.completed().await
         };
 
-        let awareness = room.awareness.clone();
-        if effective_can_edit {
-            Self::send_protocol_start(sink, awareness, DefaultProtocol).await?;
-        } else {
-            Self::send_protocol_start(sink, awareness, ReadOnlyProtocol).await?;
+        Self::cleanup_tracked_clients(awareness, tracked_clients);
+        result.map_err(|e| anyhow::anyhow!(e))
+    }
+
+    fn cleanup_tracked_clients(
+        awareness: AwarenessRef,
+        tracked: Arc<StdMutex<HashMap<ClientID, u32>>>,
+    ) {
+        // Remove awareness states owned by a connection once it disconnects to avoid ghost cursors.
+        let tracked_clients: Vec<(ClientID, u32)> = {
+            let mut guard = tracked.lock().expect("tracked clients mutex poisoned");
+            guard.drain().collect()
+        };
+        if tracked_clients.is_empty() {
+            return;
         }
 
-        subscription
-            .completed()
-            .await
-            .map_err(|e| anyhow::anyhow!(e))
+        let active_clients: HashSet<ClientID> = awareness
+            .iter()
+            .filter(|(_, state)| state.data.is_some())
+            .map(|(id, _)| id)
+            .collect();
+
+        for (client_id, recorded_clock) in tracked_clients {
+            if !active_clients.contains(&client_id) {
+                continue;
+            }
+            if let Some((current_clock, _)) = awareness.meta(client_id) {
+                if current_clock == recorded_clock {
+                    awareness.remove_state(client_id);
+                }
+            }
+        }
     }
 
     async fn ensure_edit_flag(&self, doc_id: &str) -> Arc<AtomicBool> {
@@ -518,6 +557,96 @@ impl yrs::sync::Protocol for ReadOnlyProtocol {
         _update: yrs::Update,
     ) -> Result<Option<yrs::sync::Message>, yrs::sync::Error> {
         Ok(None)
+    }
+}
+
+struct TrackingProtocol<P> {
+    inner: P,
+    tracked: Arc<StdMutex<HashMap<ClientID, u32>>>,
+}
+
+impl<P> TrackingProtocol<P> {
+    fn new(inner: P, tracked: Arc<StdMutex<HashMap<ClientID, u32>>>) -> Self {
+        Self { inner, tracked }
+    }
+}
+
+impl<P> Protocol for TrackingProtocol<P>
+where
+    P: Protocol + Send + Sync,
+{
+    fn start<E>(&self, awareness: &yrs::sync::Awareness, encoder: &mut E) -> Result<(), SyncError>
+    where
+        E: Encoder,
+    {
+        Protocol::start(&self.inner, awareness, encoder)
+    }
+
+    fn handle_sync_step1(
+        &self,
+        awareness: &yrs::sync::Awareness,
+        sv: StateVector,
+    ) -> Result<Option<yrs::sync::Message>, SyncError> {
+        Protocol::handle_sync_step1(&self.inner, awareness, sv)
+    }
+
+    fn handle_sync_step2(
+        &self,
+        awareness: &yrs::sync::Awareness,
+        update: Update,
+    ) -> Result<Option<yrs::sync::Message>, SyncError> {
+        Protocol::handle_sync_step2(&self.inner, awareness, update)
+    }
+
+    fn handle_update(
+        &self,
+        awareness: &yrs::sync::Awareness,
+        update: Update,
+    ) -> Result<Option<yrs::sync::Message>, SyncError> {
+        Protocol::handle_update(&self.inner, awareness, update)
+    }
+
+    fn handle_auth(
+        &self,
+        awareness: &yrs::sync::Awareness,
+        deny_reason: Option<String>,
+    ) -> Result<Option<yrs::sync::Message>, SyncError> {
+        Protocol::handle_auth(&self.inner, awareness, deny_reason)
+    }
+
+    fn handle_awareness_query(
+        &self,
+        awareness: &yrs::sync::Awareness,
+    ) -> Result<Option<yrs::sync::Message>, SyncError> {
+        Protocol::handle_awareness_query(&self.inner, awareness)
+    }
+
+    fn handle_awareness_update(
+        &self,
+        awareness: &yrs::sync::Awareness,
+        update: AwarenessUpdate,
+    ) -> Result<Option<yrs::sync::Message>, SyncError> {
+        {
+            let mut guard = self.tracked.lock().expect("tracked clients mutex poisoned");
+            for (&client_id, entry) in update.clients.iter() {
+                if entry.json.as_ref() == "null" {
+                    guard.remove(&client_id);
+                } else {
+                    guard.insert(client_id, entry.clock);
+                }
+            }
+        }
+        awareness.apply_update(update)?;
+        Ok(None)
+    }
+
+    fn missing_handle(
+        &self,
+        awareness: &yrs::sync::Awareness,
+        tag: u8,
+        data: Vec<u8>,
+    ) -> Result<Option<yrs::sync::Message>, SyncError> {
+        Protocol::missing_handle(&self.inner, awareness, tag, data)
     }
 }
 
