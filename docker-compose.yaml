@@ -27,6 +27,7 @@ services:
       UPLOADS_DIR: /data/uploads
       UPLOAD_MAX_BYTES: 26214400
       PLUGINS_DIR: /app/plugins
+      PLUGIN_ASSET_SIGN_KEY: change-me-please
     ports:
       - "8888:8888"
     depends_on:

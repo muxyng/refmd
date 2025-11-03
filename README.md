@@ -16,7 +16,7 @@ RefMD is a real-time Markdown collaboration platform that lets teams co-author d
    docker compose up -d
    ```
 2. Wait for the health checks to pass (`docker compose ps`) and open `http://localhost:3000` for the web app (`api` is exposed on `http://localhost:8888`).
-3. Sign up for a new account (email + password) and start editing. Update `JWT_SECRET` / `ENCRYPTION_KEY` in the compose file or an `.env` file before running in production.
+3. Sign up for a new account (email + password) and start editing. Update `JWT_SECRET` / `ENCRYPTION_KEY` / `PLUGIN_ASSET_SIGN_KEY`  in the compose file or an `.env` file before running in production.
 
 For local development or when you need to rebuild the images, use `docker compose -f docker-compose.dev.yml up --build` instead.
 
