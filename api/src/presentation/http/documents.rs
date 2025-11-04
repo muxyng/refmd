@@ -6,6 +6,7 @@ use axum::{
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -15,7 +16,9 @@ use crate::application::ports::document_snapshot_archive_repository::SnapshotArc
 use crate::application::use_cases::documents::archive_document::ArchiveDocument;
 use crate::application::use_cases::documents::create_document::CreateDocument;
 use crate::application::use_cases::documents::delete_document::DeleteDocument;
-use crate::application::use_cases::documents::download_document::DownloadDocument as DownloadDocumentUseCase;
+use crate::application::use_cases::documents::download_document::{
+    DocumentDownloadFormat, DownloadDocument as DownloadDocumentUseCase,
+};
 use crate::application::use_cases::documents::get_backlinks::GetBacklinks;
 use crate::application::use_cases::documents::get_document::GetDocument;
 use crate::application::use_cases::documents::get_outgoing_links::GetOutgoingLinks;
@@ -223,7 +226,7 @@ pub struct ListDocumentsQuery {
     pub state: Option<DocumentStateFilter>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum DocumentStateFilter {
     Active,
@@ -398,7 +401,112 @@ pub async fn get_document_content(
 
 #[allow(dead_code)]
 #[derive(ToSchema)]
+pub struct DocumentDownloadBinary(#[schema(value_type = String, format = Binary)] Vec<u8>);
+
+#[allow(dead_code)]
+#[derive(ToSchema)]
 pub struct DocumentArchiveBinary(#[schema(value_type = String, format = Binary)] Vec<u8>);
+
+#[derive(Debug, Clone, Copy, Deserialize, ToSchema, Default)]
+#[serde(rename_all = "snake_case")]
+#[schema(rename_all = "snake_case")]
+pub enum DownloadFormat {
+    #[default]
+    Archive,
+    Markdown,
+    Html,
+    Html5,
+    Pdf,
+    Docx,
+    Latex,
+    Beamer,
+    Context,
+    Man,
+    Mediawiki,
+    Dokuwiki,
+    Textile,
+    Org,
+    Texinfo,
+    Opml,
+    Docbook,
+    Opendocument,
+    Odt,
+    Rtf,
+    Epub,
+    Epub3,
+    Fb2,
+    Asciidoc,
+    Icml,
+    Slidy,
+    Slideous,
+    Dzslides,
+    Revealjs,
+    S5,
+    Json,
+    Plain,
+    Commonmark,
+    CommonmarkX,
+    MarkdownStrict,
+    MarkdownPhpextra,
+    MarkdownGithub,
+    Rst,
+    Native,
+    Haddock,
+}
+
+impl From<DownloadFormat> for DocumentDownloadFormat {
+    fn from(value: DownloadFormat) -> Self {
+        match value {
+            DownloadFormat::Archive => DocumentDownloadFormat::Archive,
+            DownloadFormat::Markdown => DocumentDownloadFormat::Markdown,
+            DownloadFormat::Html => DocumentDownloadFormat::Html,
+            DownloadFormat::Html5 => DocumentDownloadFormat::Html5,
+            DownloadFormat::Pdf => DocumentDownloadFormat::Pdf,
+            DownloadFormat::Docx => DocumentDownloadFormat::Docx,
+            DownloadFormat::Latex => DocumentDownloadFormat::Latex,
+            DownloadFormat::Beamer => DocumentDownloadFormat::Beamer,
+            DownloadFormat::Context => DocumentDownloadFormat::Context,
+            DownloadFormat::Man => DocumentDownloadFormat::Man,
+            DownloadFormat::Mediawiki => DocumentDownloadFormat::MediaWiki,
+            DownloadFormat::Dokuwiki => DocumentDownloadFormat::Dokuwiki,
+            DownloadFormat::Textile => DocumentDownloadFormat::Textile,
+            DownloadFormat::Org => DocumentDownloadFormat::Org,
+            DownloadFormat::Texinfo => DocumentDownloadFormat::Texinfo,
+            DownloadFormat::Opml => DocumentDownloadFormat::Opml,
+            DownloadFormat::Docbook => DocumentDownloadFormat::Docbook,
+            DownloadFormat::Opendocument => DocumentDownloadFormat::OpenDocument,
+            DownloadFormat::Odt => DocumentDownloadFormat::Odt,
+            DownloadFormat::Rtf => DocumentDownloadFormat::Rtf,
+            DownloadFormat::Epub => DocumentDownloadFormat::Epub,
+            DownloadFormat::Epub3 => DocumentDownloadFormat::Epub3,
+            DownloadFormat::Fb2 => DocumentDownloadFormat::Fb2,
+            DownloadFormat::Asciidoc => DocumentDownloadFormat::Asciidoc,
+            DownloadFormat::Icml => DocumentDownloadFormat::Icml,
+            DownloadFormat::Slidy => DocumentDownloadFormat::Slidy,
+            DownloadFormat::Slideous => DocumentDownloadFormat::Slideous,
+            DownloadFormat::Dzslides => DocumentDownloadFormat::Dzslides,
+            DownloadFormat::Revealjs => DocumentDownloadFormat::Revealjs,
+            DownloadFormat::S5 => DocumentDownloadFormat::S5,
+            DownloadFormat::Json => DocumentDownloadFormat::Json,
+            DownloadFormat::Plain => DocumentDownloadFormat::Plain,
+            DownloadFormat::Commonmark => DocumentDownloadFormat::Commonmark,
+            DownloadFormat::CommonmarkX => DocumentDownloadFormat::CommonmarkX,
+            DownloadFormat::MarkdownStrict => DocumentDownloadFormat::MarkdownStrict,
+            DownloadFormat::MarkdownPhpextra => DocumentDownloadFormat::MarkdownPhpextra,
+            DownloadFormat::MarkdownGithub => DocumentDownloadFormat::MarkdownGithub,
+            DownloadFormat::Rst => DocumentDownloadFormat::Rst,
+            DownloadFormat::Native => DocumentDownloadFormat::Native,
+            DownloadFormat::Haddock => DocumentDownloadFormat::Haddock,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, ToSchema, Default)]
+pub struct DownloadDocumentQuery {
+    pub token: Option<String>,
+    #[serde(default)]
+    pub format: DownloadFormat,
+}
 
 #[utoipa::path(
     get,
@@ -407,10 +515,11 @@ pub struct DocumentArchiveBinary(#[schema(value_type = String, format = Binary)]
     operation_id = "download_document",
     params(
         ("id" = Uuid, Path, description = "Document ID"),
-        ("token" = Option<String>, Query, description = "Share token (optional)")
+        ("token" = Option<String>, Query, description = "Share token (optional)"),
+        ("format" = Option<DownloadFormat>, Query, description = "Download format (see schema for supported values)")
     ),
     responses(
-        (status = 200, description = "Document archive", body = DocumentArchiveBinary, content_type = "application/zip"),
+        (status = 200, description = "Document download", body = DocumentDownloadBinary, content_type = "application/octet-stream"),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Document not found")
     )
@@ -418,12 +527,31 @@ pub struct DocumentArchiveBinary(#[schema(value_type = String, format = Binary)]
 pub async fn download_document(
     State(ctx): State<AppContext>,
     bearer: Option<Bearer>,
-    Query(params): Query<std::collections::HashMap<String, String>>,
+    Query(params): Query<DownloadDocumentQuery>,
     Path(id): Path<Uuid>,
-) -> Result<Response, StatusCode> {
-    let token = params.get("token").map(|s| s.as_str());
-    let actor =
-        auth::resolve_actor_from_parts(&ctx.cfg, bearer, token).ok_or(StatusCode::UNAUTHORIZED)?;
+) -> Result<Response, (StatusCode, Json<Value>)> {
+    let token = params.token.as_deref();
+    let format = params.format;
+    let error_response = |status: StatusCode, code: &str, message: String| {
+        (
+            status,
+            Json(json!({
+                "error": code,
+                "message": message,
+            })),
+        )
+    };
+
+    let actor = match auth::resolve_actor_from_parts(&ctx.cfg, bearer, token) {
+        Some(actor) => actor,
+        None => {
+            return Err(error_response(
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                "Unauthorized".to_string(),
+            ));
+        }
+    };
 
     let documents = ctx.document_repo();
     let files = ctx.files_repo();
@@ -441,24 +569,58 @@ pub async fn download_document(
         shares: shares.as_ref(),
     };
 
-    let download = uc
-        .execute(&actor, id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let download = match uc.execute(&actor, id, format.into()).await {
+        Ok(Some(download)) => download,
+        Ok(None) => {
+            return Err(error_response(
+                StatusCode::NOT_FOUND,
+                "not_found",
+                "Document not found".to_string(),
+            ));
+        }
+        Err(error) => {
+            tracing::error!(
+                document_id = %id,
+                ?format,
+                error = ?error,
+                "document_download_failed"
+            );
+
+            return Err(error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "conversion_failed",
+                "Failed to prepare download".to_string(),
+            ));
+        }
+    };
 
     let mut headers = HeaderMap::new();
-    headers.insert(
-        axum::http::header::CONTENT_TYPE,
-        HeaderValue::from_static("application/zip"),
-    );
+    let content_type = match HeaderValue::from_str(&download.content_type) {
+        Ok(value) => value,
+        Err(_) => {
+            return Err(error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "invalid_header",
+                "Failed to prepare download headers".to_string(),
+            ));
+        }
+    };
+    headers.insert(axum::http::header::CONTENT_TYPE, content_type);
     headers.insert(
         axum::http::header::HeaderName::from_static("x-content-type-options"),
         HeaderValue::from_static("nosniff"),
     );
     let disposition = format!("attachment; filename=\"{}\"", download.filename);
-    let content_disposition =
-        HeaderValue::from_str(&disposition).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let content_disposition = match HeaderValue::from_str(&disposition) {
+        Ok(value) => value,
+        Err(_) => {
+            return Err(error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "invalid_header",
+                "Failed to prepare download headers".to_string(),
+            ));
+        }
+    };
     headers.insert(axum::http::header::CONTENT_DISPOSITION, content_disposition);
 
     Ok((headers, download.bytes).into_response())

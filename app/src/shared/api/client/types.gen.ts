@@ -109,9 +109,18 @@ export type DocumentDiffResult = {
     old_content?: (string) | null;
 };
 
+export type DocumentDownloadBinary = Blob | File;
+
 export type DocumentListResponse = {
     items: Array<Document>;
 };
+
+export type DownloadDocumentQuery = {
+    format?: DownloadFormat;
+    token?: (string) | null;
+};
+
+export type DownloadFormat = 'archive' | 'markdown' | 'html' | 'html5' | 'pdf' | 'docx' | 'latex' | 'beamer' | 'context' | 'man' | 'mediawiki' | 'dokuwiki' | 'textile' | 'org' | 'texinfo' | 'opml' | 'docbook' | 'opendocument' | 'odt' | 'rtf' | 'epub' | 'epub3' | 'fb2' | 'asciidoc' | 'icml' | 'slidy' | 'slideous' | 'dzslides' | 'revealjs' | 's5' | 'json' | 'plain' | 'commonmark' | 'commonmark_x' | 'markdown_strict' | 'markdown_phpextra' | 'markdown_github' | 'rst' | 'native' | 'haddock';
 
 export type ExecBody = {
     payload?: unknown;
@@ -546,6 +555,10 @@ export type GetDocumentContentResponse = (unknown);
 
 export type DownloadDocumentData = {
     /**
+     * Download format (see schema for supported values)
+     */
+    format?: ((DownloadFormat) | null);
+    /**
      * Document ID
      */
     id: string;
@@ -555,7 +568,7 @@ export type DownloadDocumentData = {
     token?: (string) | null;
 };
 
-export type DownloadDocumentResponse = (DocumentArchiveBinary);
+export type DownloadDocumentResponse = (DocumentDownloadBinary);
 
 export type GetOutgoingLinksData = {
     /**

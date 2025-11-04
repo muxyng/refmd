@@ -1,23 +1,30 @@
 # -- Builder stage -----------------------------------------------------
-FROM rustlang/rust:nightly-bullseye AS build
+FROM rustlang/rust:nightly-bullseye-slim AS build
 WORKDIR /build
 
 # Build dependencies once to leverage Docker layer caching
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends pkg-config libssl-dev ca-certificates \
+    && apt-get install -y --no-install-recommends pkg-config libssl-dev ca-certificates binutils curl \
     && rm -rf /var/lib/apt/lists/*
 COPY Cargo.toml Cargo.lock ./
-RUN mkdir src && echo "fn main(){}" > src/main.rs && cargo build --release --bin api || true
+RUN mkdir src && echo "fn main(){}" > src/main.rs && cargo build --locked --release --bin api || true
 
 # Actual sources
 COPY . ./
 ENV SQLX_OFFLINE=true
-RUN cargo build --release --bin api
+RUN cargo build --locked --release --bin api \
+    && strip target/release/api
 
 # -- Runtime stage -----------------------------------------------------
 FROM debian:bullseye-slim AS runtime
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates wget gosu \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        wget \
+        gosu \
+        pandoc \
+        wkhtmltopdf \
+        fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
 ENV RUST_LOG=api=info,axum=info,tower_http=info \

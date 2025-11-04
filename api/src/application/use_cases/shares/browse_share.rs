@@ -21,8 +21,9 @@ impl<'a, R: SharesRepository + ?Sized> BrowseShare<'a, R> {
         if shared_type != "folder" {
             let mut tree = Vec::new();
             let doc_rows = self.repo.list_subtree_nodes(shared_id).await?;
-            if let Some((id, title, typ, _parent_id, created_at, updated_at)) =
-                doc_rows.into_iter().find(|(id, _, _, _, _, _)| *id == shared_id)
+            if let Some((id, title, typ, _parent_id, created_at, updated_at)) = doc_rows
+                .into_iter()
+                .find(|(id, _, _, _, _, _)| *id == shared_id)
             {
                 tree.push(ShareBrowseTreeItemDto {
                     id,
