@@ -20,6 +20,22 @@ use tokio::task;
 
 static PANDOC_WORKDIR_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
+const DEFAULT_PDF_CSS: &str = r#"
+body {
+    font-family: 'Noto Sans CJK JP', 'Noto Sans CJK SC', 'Noto Sans CJK TC', 'Noto Sans CJK KR',
+                 'Noto Sans JP', 'Noto Sans', 'Noto Serif CJK JP', 'Noto Serif CJK SC',
+                 'Noto Serif CJK TC', 'Noto Serif CJK KR', 'Source Han Sans JP', 'Source Han Sans SC',
+                 'Source Han Sans TC', 'Source Han Sans KR', 'Hiragino Kaku Gothic ProN', 'Yu Gothic',
+                 'PingFang SC', 'Microsoft YaHei', 'Microsoft JhengHei', 'Malgun Gothic', sans-serif;
+}
+
+code,
+pre {
+    font-family: 'Noto Sans Mono CJK JP', 'Noto Sans Mono', 'Source Code Pro', 'Roboto Mono',
+                 'Menlo', 'Consolas', 'monospace';
+}
+"#;
+
 struct WorkingDirGuard {
     original: Option<std::path::PathBuf>,
 }
@@ -218,6 +234,7 @@ struct PandocCommandConfig {
     self_contained: bool,
     pdf_engine: Option<&'static str>,
     pdf_engine_opts: &'static [&'static str],
+    include_default_css: bool,
 }
 
 impl PandocCommandConfig {
@@ -230,6 +247,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::Pipe,
                 standalone: true,
                 self_contained: true,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -238,6 +256,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::Pipe,
                 standalone: true,
                 self_contained: true,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -246,6 +265,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::Pipe,
                 standalone: true,
                 self_contained: true,
+                include_default_css: true,
                 pdf_engine: Some("wkhtmltopdf"),
                 pdf_engine_opts: &["--enable-local-file-access"],
             },
@@ -254,6 +274,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::File("document.docx"),
                 standalone: false,
                 self_contained: false,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -262,6 +283,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::Pipe,
                 standalone: true,
                 self_contained: false,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -270,6 +292,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::Pipe,
                 standalone: true,
                 self_contained: false,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -278,6 +301,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::Pipe,
                 standalone: true,
                 self_contained: false,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -286,6 +310,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::Pipe,
                 standalone: true,
                 self_contained: false,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -294,6 +319,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::Pipe,
                 standalone: false,
                 self_contained: false,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -302,6 +328,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::Pipe,
                 standalone: false,
                 self_contained: false,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -310,6 +337,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::Pipe,
                 standalone: false,
                 self_contained: false,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -318,6 +346,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::Pipe,
                 standalone: false,
                 self_contained: false,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -326,6 +355,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::Pipe,
                 standalone: true,
                 self_contained: false,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -334,6 +364,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::Pipe,
                 standalone: false,
                 self_contained: false,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -342,6 +373,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::Pipe,
                 standalone: true,
                 self_contained: false,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -350,6 +382,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::File("document.odt"),
                 standalone: true,
                 self_contained: false,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -358,6 +391,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::File("document.odt"),
                 standalone: true,
                 self_contained: false,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -366,6 +400,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::Pipe,
                 standalone: true,
                 self_contained: false,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -374,6 +409,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::File("document.epub"),
                 standalone: true,
                 self_contained: false,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -382,6 +418,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::File("document.epub"),
                 standalone: true,
                 self_contained: false,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -390,6 +427,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::Pipe,
                 standalone: true,
                 self_contained: false,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -398,6 +436,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::Pipe,
                 standalone: false,
                 self_contained: false,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -406,6 +445,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::File("document.icml"),
                 standalone: true,
                 self_contained: false,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -414,6 +454,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::Pipe,
                 standalone: true,
                 self_contained: true,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -422,6 +463,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::Pipe,
                 standalone: true,
                 self_contained: true,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -430,6 +472,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::Pipe,
                 standalone: true,
                 self_contained: true,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -438,6 +481,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::Pipe,
                 standalone: true,
                 self_contained: true,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -446,6 +490,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::Pipe,
                 standalone: true,
                 self_contained: true,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -454,6 +499,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::Pipe,
                 standalone: false,
                 self_contained: false,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -462,6 +508,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::Pipe,
                 standalone: false,
                 self_contained: false,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -470,6 +517,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::Pipe,
                 standalone: false,
                 self_contained: false,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -478,6 +526,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::Pipe,
                 standalone: false,
                 self_contained: false,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -486,6 +535,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::Pipe,
                 standalone: false,
                 self_contained: false,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -494,6 +544,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::Pipe,
                 standalone: false,
                 self_contained: false,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -502,6 +553,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::Pipe,
                 standalone: false,
                 self_contained: false,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -510,6 +562,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::Pipe,
                 standalone: false,
                 self_contained: false,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -518,6 +571,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::Pipe,
                 standalone: false,
                 self_contained: false,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -526,6 +580,7 @@ impl PandocCommandConfig {
                 destination: PandocOutputKind::Pipe,
                 standalone: false,
                 self_contained: false,
+                include_default_css: false,
                 pdf_engine: None,
                 pdf_engine_opts: &[],
             },
@@ -784,6 +839,13 @@ async fn render_with_pandoc(
         }
         if config.self_contained {
             pandoc_cmd.add_option(PandocOption::SelfContained);
+        }
+        if config.include_default_css {
+            let css_path = resource_dir.join("refmd-defaults.css");
+            std::fs::write(&css_path, DEFAULT_PDF_CSS).with_context(|| {
+                format!("failed to write temporary CSS file {}", css_path.display())
+            })?;
+            pandoc_cmd.add_option(PandocOption::Css(css_path.to_string_lossy().to_string()));
         }
         let mut pdf_engine_opts: Vec<String> = config
             .pdf_engine_opts
