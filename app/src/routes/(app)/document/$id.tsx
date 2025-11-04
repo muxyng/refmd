@@ -196,7 +196,7 @@ function DocumentDownloadDialog({
             <span className="text-sm font-medium">{option.label}</span>
             <span className="text-xs text-muted-foreground">{option.description}</span>
           </div>
-          <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-primary" />
+          <ChevronRight className="ml-auto h-4 w-4 text-muted-foreground group-hover:text-primary" />
         </button>
       )
     },
@@ -252,20 +252,27 @@ function DocumentDownloadDialog({
               <div className="flex flex-col gap-3">
                 {primaryOptions.map((option) => renderOption(option))}
               </div>
-              <Button
-                variant="outline"
-                className="justify-between px-4 py-3"
+              <button
+                type="button"
                 onClick={() => setShowOther(true)}
                 disabled={isPending || otherGroups.length === 0}
+                className={cn(
+                  'group flex w-full items-center gap-4 rounded-xl border border-dashed border-border/60 bg-background/50 px-4 py-4 text-left transition',
+                  'hover:border-primary/60 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/40 focus:ring-offset-2',
+                  'disabled:cursor-not-allowed disabled:opacity-60',
+                )}
               >
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-muted-foreground group-hover:text-primary">
+                  <FileText className="h-5 w-5" />
+                </div>
                 <div className="flex flex-col text-left">
                   <span className="text-sm font-medium">Other formats…</span>
                   <span className="text-xs text-muted-foreground">
                     Export using any other Pandoc-supported writer.
                   </span>
                 </div>
-                <ChevronRight className="h-4 w-4 text-muted-foreground" />
-              </Button>
+                <ChevronRight className="ml-auto h-4 w-4 text-muted-foreground group-hover:text-primary" />
+              </button>
             </>
           )}
         </div>
