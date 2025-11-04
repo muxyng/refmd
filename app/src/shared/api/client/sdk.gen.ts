@@ -230,7 +230,7 @@ export const getDocumentContent = (data: GetDocumentContentData): CancelableProm
  * @param data The data for the request.
  * @param data.id Document ID
  * @param data.token Share token (optional)
- * @param data.format Download format (archive|markdown|html|pdf|docx)
+ * @param data.format Download format (see schema for supported values)
  * @returns DocumentDownloadBinary Document download
  * @throws ApiError
  */

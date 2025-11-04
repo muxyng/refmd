@@ -27,8 +27,43 @@ pub enum DocumentDownloadFormat {
     Archive,
     Markdown,
     Html,
+    Html5,
     Pdf,
     Docx,
+    Latex,
+    Beamer,
+    Context,
+    Man,
+    MediaWiki,
+    Dokuwiki,
+    Textile,
+    Org,
+    Texinfo,
+    Opml,
+    Docbook,
+    OpenDocument,
+    Odt,
+    Rtf,
+    Epub,
+    Epub3,
+    Fb2,
+    Asciidoc,
+    Icml,
+    Slidy,
+    Slideous,
+    Dzslides,
+    Revealjs,
+    S5,
+    Json,
+    Plain,
+    Commonmark,
+    CommonmarkX,
+    MarkdownStrict,
+    MarkdownPhpextra,
+    MarkdownGithub,
+    Rst,
+    Native,
+    Haddock,
 }
 
 impl DocumentDownloadFormat {
@@ -37,8 +72,42 @@ impl DocumentDownloadFormat {
             DocumentDownloadFormat::Archive => "zip",
             DocumentDownloadFormat::Markdown => "md",
             DocumentDownloadFormat::Html => "html",
+            DocumentDownloadFormat::Html5 => "html",
             DocumentDownloadFormat::Pdf => "pdf",
             DocumentDownloadFormat::Docx => "docx",
+            DocumentDownloadFormat::Latex => "tex",
+            DocumentDownloadFormat::Beamer => "tex",
+            DocumentDownloadFormat::Context => "tex",
+            DocumentDownloadFormat::Man => "man",
+            DocumentDownloadFormat::MediaWiki => "mediawiki",
+            DocumentDownloadFormat::Dokuwiki => "txt",
+            DocumentDownloadFormat::Textile => "textile",
+            DocumentDownloadFormat::Org => "org",
+            DocumentDownloadFormat::Texinfo => "texi",
+            DocumentDownloadFormat::Opml => "opml",
+            DocumentDownloadFormat::Docbook => "xml",
+            DocumentDownloadFormat::OpenDocument => "odt",
+            DocumentDownloadFormat::Odt => "odt",
+            DocumentDownloadFormat::Rtf => "rtf",
+            DocumentDownloadFormat::Epub | DocumentDownloadFormat::Epub3 => "epub",
+            DocumentDownloadFormat::Fb2 => "fb2",
+            DocumentDownloadFormat::Asciidoc => "adoc",
+            DocumentDownloadFormat::Icml => "icml",
+            DocumentDownloadFormat::Slidy
+            | DocumentDownloadFormat::Slideous
+            | DocumentDownloadFormat::Dzslides
+            | DocumentDownloadFormat::Revealjs
+            | DocumentDownloadFormat::S5 => "html",
+            DocumentDownloadFormat::Json => "json",
+            DocumentDownloadFormat::Plain => "txt",
+            DocumentDownloadFormat::Commonmark
+            | DocumentDownloadFormat::CommonmarkX
+            | DocumentDownloadFormat::MarkdownStrict
+            | DocumentDownloadFormat::MarkdownPhpextra
+            | DocumentDownloadFormat::MarkdownGithub => "md",
+            DocumentDownloadFormat::Rst => "rst",
+            DocumentDownloadFormat::Native => "hs",
+            DocumentDownloadFormat::Haddock => "txt",
         }
     }
 
@@ -47,10 +116,44 @@ impl DocumentDownloadFormat {
             DocumentDownloadFormat::Archive => "application/zip",
             DocumentDownloadFormat::Markdown => "text/markdown; charset=utf-8",
             DocumentDownloadFormat::Html => "text/html; charset=utf-8",
+            DocumentDownloadFormat::Html5 => "text/html; charset=utf-8",
             DocumentDownloadFormat::Pdf => "application/pdf",
             DocumentDownloadFormat::Docx => {
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             }
+            DocumentDownloadFormat::Latex
+            | DocumentDownloadFormat::Beamer
+            | DocumentDownloadFormat::Context => "application/x-tex",
+            DocumentDownloadFormat::Man => "text/troff",
+            DocumentDownloadFormat::MediaWiki
+            | DocumentDownloadFormat::Dokuwiki
+            | DocumentDownloadFormat::Textile
+            | DocumentDownloadFormat::Org
+            | DocumentDownloadFormat::Texinfo
+            | DocumentDownloadFormat::Plain
+            | DocumentDownloadFormat::Rst
+            | DocumentDownloadFormat::Native
+            | DocumentDownloadFormat::Haddock => "text/plain; charset=utf-8",
+            DocumentDownloadFormat::Commonmark
+            | DocumentDownloadFormat::CommonmarkX
+            | DocumentDownloadFormat::MarkdownStrict
+            | DocumentDownloadFormat::MarkdownPhpextra
+            | DocumentDownloadFormat::MarkdownGithub => "text/markdown; charset=utf-8",
+            DocumentDownloadFormat::Opml | DocumentDownloadFormat::Docbook => "application/xml",
+            DocumentDownloadFormat::OpenDocument | DocumentDownloadFormat::Odt => {
+                "application/vnd.oasis.opendocument.text"
+            }
+            DocumentDownloadFormat::Rtf => "application/rtf",
+            DocumentDownloadFormat::Epub | DocumentDownloadFormat::Epub3 => "application/epub+zip",
+            DocumentDownloadFormat::Fb2 => "application/x-fictionbook+xml",
+            DocumentDownloadFormat::Asciidoc => "text/plain; charset=utf-8",
+            DocumentDownloadFormat::Icml => "application/vnd.adobe.indesign-icml",
+            DocumentDownloadFormat::Slidy
+            | DocumentDownloadFormat::Slideous
+            | DocumentDownloadFormat::Dzslides
+            | DocumentDownloadFormat::Revealjs
+            | DocumentDownloadFormat::S5 => "text/html; charset=utf-8",
+            DocumentDownloadFormat::Json => "application/json",
         }
     }
 
@@ -59,12 +162,301 @@ impl DocumentDownloadFormat {
     }
 
     fn needs_pandoc(&self) -> bool {
-        matches!(
+        !matches!(
             self,
-            DocumentDownloadFormat::Html
-                | DocumentDownloadFormat::Pdf
-                | DocumentDownloadFormat::Docx
+            DocumentDownloadFormat::Archive | DocumentDownloadFormat::Markdown
         )
+    }
+}
+
+#[derive(Clone, Copy)]
+enum PandocOutputKind {
+    Pipe,
+    File(&'static str),
+}
+
+#[derive(Clone)]
+struct PandocCommandConfig {
+    output_format: OutputFormat,
+    destination: PandocOutputKind,
+    standalone: bool,
+    self_contained: bool,
+    pdf_engine: Option<&'static str>,
+}
+
+impl PandocCommandConfig {
+    fn for_format(format: DocumentDownloadFormat) -> Option<Self> {
+        use DocumentDownloadFormat::*;
+        let config = match format {
+            Archive | Markdown => return None,
+            Html => Self {
+                output_format: OutputFormat::Html,
+                destination: PandocOutputKind::Pipe,
+                standalone: true,
+                self_contained: true,
+                pdf_engine: None,
+            },
+            Html5 => Self {
+                output_format: OutputFormat::Html5,
+                destination: PandocOutputKind::Pipe,
+                standalone: true,
+                self_contained: true,
+                pdf_engine: None,
+            },
+            Pdf => Self {
+                output_format: OutputFormat::Pdf,
+                destination: PandocOutputKind::Pipe,
+                standalone: true,
+                self_contained: false,
+                pdf_engine: Some("wkhtmltopdf"),
+            },
+            Docx => Self {
+                output_format: OutputFormat::Docx,
+                destination: PandocOutputKind::File("document.docx"),
+                standalone: false,
+                self_contained: false,
+                pdf_engine: None,
+            },
+            Latex => Self {
+                output_format: OutputFormat::Latex,
+                destination: PandocOutputKind::Pipe,
+                standalone: true,
+                self_contained: false,
+                pdf_engine: None,
+            },
+            Beamer => Self {
+                output_format: OutputFormat::Beamer,
+                destination: PandocOutputKind::Pipe,
+                standalone: true,
+                self_contained: false,
+                pdf_engine: None,
+            },
+            Context => Self {
+                output_format: OutputFormat::Context,
+                destination: PandocOutputKind::Pipe,
+                standalone: true,
+                self_contained: false,
+                pdf_engine: None,
+            },
+            Man => Self {
+                output_format: OutputFormat::Man,
+                destination: PandocOutputKind::Pipe,
+                standalone: true,
+                self_contained: false,
+                pdf_engine: None,
+            },
+            MediaWiki => Self {
+                output_format: OutputFormat::MediaWiki,
+                destination: PandocOutputKind::Pipe,
+                standalone: false,
+                self_contained: false,
+                pdf_engine: None,
+            },
+            Dokuwiki => Self {
+                output_format: OutputFormat::Dokuwiki,
+                destination: PandocOutputKind::Pipe,
+                standalone: false,
+                self_contained: false,
+                pdf_engine: None,
+            },
+            Textile => Self {
+                output_format: OutputFormat::Textile,
+                destination: PandocOutputKind::Pipe,
+                standalone: false,
+                self_contained: false,
+                pdf_engine: None,
+            },
+            Org => Self {
+                output_format: OutputFormat::Org,
+                destination: PandocOutputKind::Pipe,
+                standalone: false,
+                self_contained: false,
+                pdf_engine: None,
+            },
+            Texinfo => Self {
+                output_format: OutputFormat::Texinfo,
+                destination: PandocOutputKind::Pipe,
+                standalone: true,
+                self_contained: false,
+                pdf_engine: None,
+            },
+            Opml => Self {
+                output_format: OutputFormat::Opml,
+                destination: PandocOutputKind::Pipe,
+                standalone: false,
+                self_contained: false,
+                pdf_engine: None,
+            },
+            Docbook => Self {
+                output_format: OutputFormat::Docbook,
+                destination: PandocOutputKind::Pipe,
+                standalone: true,
+                self_contained: false,
+                pdf_engine: None,
+            },
+            OpenDocument => Self {
+                output_format: OutputFormat::OpenDocument,
+                destination: PandocOutputKind::File("document.odt"),
+                standalone: true,
+                self_contained: false,
+                pdf_engine: None,
+            },
+            Odt => Self {
+                output_format: OutputFormat::Odt,
+                destination: PandocOutputKind::File("document.odt"),
+                standalone: true,
+                self_contained: false,
+                pdf_engine: None,
+            },
+            Rtf => Self {
+                output_format: OutputFormat::Rtf,
+                destination: PandocOutputKind::Pipe,
+                standalone: true,
+                self_contained: false,
+                pdf_engine: None,
+            },
+            Epub => Self {
+                output_format: OutputFormat::Epub,
+                destination: PandocOutputKind::File("document.epub"),
+                standalone: true,
+                self_contained: false,
+                pdf_engine: None,
+            },
+            Epub3 => Self {
+                output_format: OutputFormat::Epub3,
+                destination: PandocOutputKind::File("document.epub"),
+                standalone: true,
+                self_contained: false,
+                pdf_engine: None,
+            },
+            Fb2 => Self {
+                output_format: OutputFormat::Fb2,
+                destination: PandocOutputKind::Pipe,
+                standalone: true,
+                self_contained: false,
+                pdf_engine: None,
+            },
+            Asciidoc => Self {
+                output_format: OutputFormat::Asciidoc,
+                destination: PandocOutputKind::Pipe,
+                standalone: false,
+                self_contained: false,
+                pdf_engine: None,
+            },
+            Icml => Self {
+                output_format: OutputFormat::Icml,
+                destination: PandocOutputKind::File("document.icml"),
+                standalone: true,
+                self_contained: false,
+                pdf_engine: None,
+            },
+            Slidy => Self {
+                output_format: OutputFormat::Slidy,
+                destination: PandocOutputKind::Pipe,
+                standalone: true,
+                self_contained: true,
+                pdf_engine: None,
+            },
+            Slideous => Self {
+                output_format: OutputFormat::Slideous,
+                destination: PandocOutputKind::Pipe,
+                standalone: true,
+                self_contained: true,
+                pdf_engine: None,
+            },
+            Dzslides => Self {
+                output_format: OutputFormat::Dzslides,
+                destination: PandocOutputKind::Pipe,
+                standalone: true,
+                self_contained: true,
+                pdf_engine: None,
+            },
+            Revealjs => Self {
+                output_format: OutputFormat::Revealjs,
+                destination: PandocOutputKind::Pipe,
+                standalone: true,
+                self_contained: true,
+                pdf_engine: None,
+            },
+            S5 => Self {
+                output_format: OutputFormat::S5,
+                destination: PandocOutputKind::Pipe,
+                standalone: true,
+                self_contained: true,
+                pdf_engine: None,
+            },
+            Json => Self {
+                output_format: OutputFormat::Json,
+                destination: PandocOutputKind::Pipe,
+                standalone: false,
+                self_contained: false,
+                pdf_engine: None,
+            },
+            Plain => Self {
+                output_format: OutputFormat::Plain,
+                destination: PandocOutputKind::Pipe,
+                standalone: false,
+                self_contained: false,
+                pdf_engine: None,
+            },
+            Commonmark => Self {
+                output_format: OutputFormat::Commonmark,
+                destination: PandocOutputKind::Pipe,
+                standalone: false,
+                self_contained: false,
+                pdf_engine: None,
+            },
+            CommonmarkX => Self {
+                output_format: OutputFormat::CommonmarkX,
+                destination: PandocOutputKind::Pipe,
+                standalone: false,
+                self_contained: false,
+                pdf_engine: None,
+            },
+            MarkdownStrict => Self {
+                output_format: OutputFormat::MarkdownStrict,
+                destination: PandocOutputKind::Pipe,
+                standalone: false,
+                self_contained: false,
+                pdf_engine: None,
+            },
+            MarkdownPhpextra => Self {
+                output_format: OutputFormat::MarkdownPhpextra,
+                destination: PandocOutputKind::Pipe,
+                standalone: false,
+                self_contained: false,
+                pdf_engine: None,
+            },
+            MarkdownGithub => Self {
+                output_format: OutputFormat::MarkdownGithub,
+                destination: PandocOutputKind::Pipe,
+                standalone: false,
+                self_contained: false,
+                pdf_engine: None,
+            },
+            Rst => Self {
+                output_format: OutputFormat::Rst,
+                destination: PandocOutputKind::Pipe,
+                standalone: false,
+                self_contained: false,
+                pdf_engine: None,
+            },
+            Native => Self {
+                output_format: OutputFormat::Native,
+                destination: PandocOutputKind::Pipe,
+                standalone: false,
+                self_contained: false,
+                pdf_engine: None,
+            },
+            Haddock => Self {
+                output_format: OutputFormat::Haddock,
+                destination: PandocOutputKind::Pipe,
+                standalone: false,
+                self_contained: false,
+                pdf_engine: None,
+            },
+        };
+        Some(config)
     }
 }
 
@@ -294,37 +686,33 @@ async fn render_with_pandoc(
     }
 
     let resource_dir = tmp_dir.path().to_path_buf();
+    let config = PandocCommandConfig::for_format(format)
+        .ok_or_else(|| anyhow::anyhow!("unsupported pandoc format {:?}", format))?;
     let format_copy = format;
-    let docx_output_path = if matches!(format, DocumentDownloadFormat::Docx) {
-        Some(tmp_dir.path().join("document.docx"))
-    } else {
-        None
-    };
     let output_bytes = task::spawn_blocking(move || -> anyhow::Result<Vec<u8>> {
         let mut pandoc_cmd = pandoc::new();
         pandoc_cmd.set_input(InputKind::Pipe(markdown_source));
         pandoc_cmd.set_input_format(InputFormat::Markdown, Vec::new());
-        pandoc_cmd.set_output(OutputKind::Pipe);
         pandoc_cmd.add_option(PandocOption::ResourcePath(vec![resource_dir.clone()]));
 
-        match format_copy {
-            DocumentDownloadFormat::Html => {
-                pandoc_cmd.set_output_format(OutputFormat::Html5, Vec::new());
-                pandoc_cmd.add_option(PandocOption::Standalone);
+        pandoc_cmd.set_output_format(config.output_format, Vec::new());
+        match config.destination {
+            PandocOutputKind::Pipe => {
+                pandoc_cmd.set_output(OutputKind::Pipe);
             }
-            DocumentDownloadFormat::Pdf => {
-                pandoc_cmd.set_output_format(OutputFormat::Pdf, Vec::new());
-                pandoc_cmd.add_option(PandocOption::Standalone);
-                pandoc_cmd.add_option(PandocOption::PdfEngine(PathBuf::from("wkhtmltopdf")));
+            PandocOutputKind::File(file_name) => {
+                let target = tmp_dir.path().join(file_name);
+                pandoc_cmd.set_output(OutputKind::File(target));
             }
-            DocumentDownloadFormat::Docx => {
-                pandoc_cmd.set_output_format(OutputFormat::Docx, Vec::new());
-                let output_path = docx_output_path
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("docx output path unavailable"))?;
-                pandoc_cmd.set_output(OutputKind::File(output_path.clone()));
-            }
-            _ => return Err(anyhow::anyhow!("unsupported format for pandoc render")),
+        }
+        if config.standalone {
+            pandoc_cmd.add_option(PandocOption::Standalone);
+        }
+        if config.self_contained {
+            pandoc_cmd.add_option(PandocOption::SelfContained);
+        }
+        if let Some(engine) = config.pdf_engine {
+            pandoc_cmd.add_option(PandocOption::PdfEngine(PathBuf::from(engine)));
         }
 
         let output = pandoc_cmd.execute().map_err(|err| match err {
@@ -346,10 +734,7 @@ async fn render_with_pandoc(
         let bytes = match output {
             PandocOutput::ToBuffer(text) => text.into_bytes(),
             PandocOutput::ToBufferRaw(raw) => raw,
-            PandocOutput::ToFile(path) => {
-                let data = std::fs::read(&path).map_err(anyhow::Error::new)?;
-                data
-            }
+            PandocOutput::ToFile(path) => std::fs::read(&path).map_err(anyhow::Error::new)?,
         };
         Ok(bytes)
     })

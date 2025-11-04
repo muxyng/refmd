@@ -1,12 +1,22 @@
 import { createFileRoute, useNavigate, useParams } from '@tanstack/react-router'
-import { Download, History, Loader2 } from 'lucide-react'
+import { Archive, Book, ChevronLeft, ChevronRight, Download, FileDigit, FileText, FileType, Globe, History, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
 import { Button } from '@/shared/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/shared/ui/dialog'
+import { ScrollArea } from '@/shared/ui/scroll-area'
 
-import { downloadDocumentFile, fetchDocumentMeta, type DocumentDownloadFormat } from '@/entities/document'
+import { overlayPanelClass } from '@/shared/lib/overlay-classes'
+import { cn } from '@/shared/lib/utils'
+
+import {
+  DOWNLOAD_FORMAT_METADATA,
+  downloadDocumentFile,
+  fetchDocumentMeta,
+  type DocumentDownloadFormat,
+  type DocumentDownloadFormatMetadata,
+} from '@/entities/document'
 import { buildCanonicalUrl, buildOgImageUrl } from '@/entities/public'
 
 import { documentBeforeLoadGuard, useAuthContext } from '@/features/auth'
@@ -28,51 +38,250 @@ export type DocumentRouteSearch = {
   [key: string]: string | string[] | undefined
 }
 
+const formatIcons: Partial<Record<DocumentDownloadFormat, React.ComponentType<{ className?: string }>>> = {
+  archive: Archive,
+  markdown: FileText,
+  html: Globe,
+  html5: Globe,
+  pdf: FileDigit,
+  docx: FileType,
+  latex: FileDigit,
+  beamer: FileDigit,
+  context: FileDigit,
+  man: FileText,
+  mediawiki: FileText,
+  dokuwiki: FileText,
+  textile: FileText,
+  org: FileText,
+  texinfo: FileText,
+  opml: FileDigit,
+  docbook: FileDigit,
+  opendocument: FileType,
+  odt: FileType,
+  rtf: FileType,
+  epub: Book,
+  epub3: Book,
+  fb2: Book,
+  asciidoc: FileText,
+  icml: FileType,
+  slidy: Globe,
+  slideous: Globe,
+  dzslides: Globe,
+  revealjs: Globe,
+  s5: Globe,
+  json: FileDigit,
+  plain: FileText,
+  commonmark: FileText,
+  commonmark_x: FileText,
+  markdown_strict: FileText,
+  markdown_phpextra: FileText,
+  markdown_github: FileText,
+  rst: FileText,
+  native: FileDigit,
+  haddock: FileText,
+}
+
+type DownloadOption = {
+  format: DocumentDownloadFormat
+  label: string
+  description: string
+}
+
+type DownloadOptionGroup = {
+  title: string
+  description?: string
+  items: DownloadOption[]
+}
+
+const PRIMARY_FORMATS: DocumentDownloadFormat[] = ['archive', 'markdown', 'html', 'pdf', 'docx']
+
+const PRIMARY_OPTIONS: DownloadOption[] = PRIMARY_FORMATS.map((format) => {
+  const meta = DOWNLOAD_FORMAT_METADATA[format]
+  return { format, label: meta.label, description: meta.description }
+})
+
+const OTHER_GROUP_TITLES: string[] = [
+  'Web & Slides',
+  'TeX & Academic',
+  'Office & Rich Text',
+  'E-books',
+  'Wiki & Markup',
+  'Data & Interchange',
+  'Manuals',
+] 
+
+const GROUP_DESCRIPTIONS: Record<string, string> = {
+  'Web & Slides': 'HTML presentations and web-ready documents.',
+  'TeX & Academic': 'TeX-based outputs for academic workflows.',
+  'Office & Rich Text': 'Office document formats and rich text.',
+  'E-books': 'Digital book formats supported by e-readers.',
+  'Wiki & Markup': 'Markup languages and wiki syntaxes.',
+  'Data & Interchange': 'Structured data formats and AST exports.',
+  'Manuals': 'Formats suited for manuals and reference pages.',
+}
+
+const METADATA_ENTRIES = Object.entries(DOWNLOAD_FORMAT_METADATA) as Array<
+  [DocumentDownloadFormat, DocumentDownloadFormatMetadata]
+>
+
+const OTHER_FORMAT_GROUPS: DownloadOptionGroup[] = (() => {
+  const groups = OTHER_GROUP_TITLES.map((title) => {
+    const items = METADATA_ENTRIES.filter(
+      ([, meta]) => meta.category === 'other' && meta.group === title,
+    ).map(([format, meta]) => ({ format, label: meta.label, description: meta.description }))
+    return {
+      title,
+      description: GROUP_DESCRIPTIONS[title],
+      items,
+    }
+  }).filter((group) => group.items.length > 0)
+
+  const remaining = METADATA_ENTRIES.filter(
+    ([, meta]) => meta.category === 'other' && (!meta.group || !OTHER_GROUP_TITLES.includes(meta.group)),
+  ).map(([format, meta]) => ({ format, label: meta.label, description: meta.description }))
+
+  if (remaining.length > 0) {
+    groups.push({
+      title: 'Other formats',
+      description: 'Additional writers supported by Pandoc.',
+      items: remaining,
+    })
+  }
+
+  return groups
+})()
+
 function DocumentDownloadDialog({
   open,
   onOpenChange,
-  options,
+  primaryOptions,
+  otherGroups,
   onSelect,
   isPending,
 }: {
   open: boolean
   onOpenChange: (value: boolean) => void
-  options: Array<{ format: DocumentDownloadFormat; label: string; description: string }>
+  primaryOptions: DownloadOption[]
+  otherGroups: DownloadOptionGroup[]
   onSelect: (format: DocumentDownloadFormat) => void | Promise<void>
   isPending: boolean
 }) {
+  const [showOther, setShowOther] = useState(false)
+
+  useEffect(() => {
+    if (!open) {
+      setShowOther(false)
+    }
+  }, [open])
+
+  const renderOption = useCallback(
+    (option: DownloadOption) => {
+      const Icon = formatIcons[option.format] ?? FileType
+      return (
+        <button
+          type="button"
+          key={option.format}
+          onClick={() => onSelect(option.format)}
+          disabled={isPending}
+          className={cn(
+            'group flex w-full items-center gap-4 rounded-xl border border-border/60 bg-background/70 px-4 py-4 text-left transition',
+            'hover:border-primary/60 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/40 focus:ring-offset-2',
+            'disabled:cursor-not-allowed disabled:opacity-60',
+          )}
+        >
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-muted-foreground group-hover:text-primary">
+            <Icon className="h-5 w-5" />
+          </div>
+          <div className="flex flex-col items-start text-left">
+            <span className="text-sm font-medium">{option.label}</span>
+            <span className="text-xs text-muted-foreground">{option.description}</span>
+          </div>
+          <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-primary" />
+        </button>
+      )
+    },
+    [isPending, onSelect],
+  )
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
+      <DialogContent className={cn('sm:max-w-lg p-0', overlayPanelClass)}>
+        <DialogHeader className="px-6 py-4 border-b">
           <DialogTitle>Download document</DialogTitle>
-          <DialogDescription>Select an export format for the current document.</DialogDescription>
+          <DialogDescription>
+            {showOther
+              ? 'Select from additional Pandoc-supported formats.'
+              : 'Select an export format for the current document.'}
+          </DialogDescription>
         </DialogHeader>
-        <div className="flex flex-col gap-2">
-          {options.map((option) => (
-            <Button
-              key={option.format}
-              variant="outline"
-              className="justify-between px-4 py-3"
-              onClick={() => onSelect(option.format)}
-              disabled={isPending}
-            >
-              <div className="flex flex-col items-start text-left">
-                <span className="text-sm font-medium">{option.label}</span>
-                <span className="text-xs text-muted-foreground">{option.description}</span>
+        <div className="px-6 py-4 flex flex-col gap-4">
+          {showOther ? (
+            <>
+              <div className="flex items-center justify-between">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowOther(false)}
+                  disabled={isPending}
+                  className="-ml-2"
+                >
+                  <ChevronLeft className="mr-2 h-4 w-4" />
+                  Back
+                </Button>
               </div>
-            </Button>
-          ))}
-        </div>
-        <DialogFooter className="mt-4">
-          {isPending ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground mr-auto">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              <span>Preparing download…</span>
-            </div>
+              <ScrollArea className="max-h-72 pr-2">
+                <div className="flex flex-col gap-4">
+                  {otherGroups.map((group) => (
+                    <div key={group.title} className="space-y-2">
+                      <div className="flex flex-col gap-1">
+                        <span className="text-sm font-semibold">{group.title}</span>
+                        {group.description ? (
+                          <span className="text-xs text-muted-foreground">{group.description}</span>
+                        ) : null}
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        {group.items.map((option) => renderOption(option))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+            </>
           ) : (
-            <div className="mr-auto text-sm text-muted-foreground">Choose a format to start exporting.</div>
+            <>
+              <div className="flex flex-col gap-3">
+                {primaryOptions.map((option) => renderOption(option))}
+              </div>
+              <Button
+                variant="outline"
+                className="justify-between px-4 py-3"
+                onClick={() => setShowOther(true)}
+                disabled={isPending || otherGroups.length === 0}
+              >
+                <div className="flex flex-col text-left">
+                  <span className="text-sm font-medium">Other formats…</span>
+                  <span className="text-xs text-muted-foreground">
+                    Export using any other Pandoc-supported writer.
+                  </span>
+                </div>
+                <ChevronRight className="h-4 w-4 text-muted-foreground" />
+              </Button>
+            </>
           )}
+        </div>
+        <DialogFooter className="px-6 py-4 border-t flex items-center gap-3">
+          <div className="mr-auto text-sm text-muted-foreground">
+            {isPending ? (
+              <span className="inline-flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Preparing download…
+              </span>
+            ) : showOther ? (
+              'Choose a format from the list or go back to quick options.'
+            ) : (
+              'Choose a format to start exporting.'
+            )}
+          </div>
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={isPending}>
             Cancel
           </Button>
@@ -86,34 +295,6 @@ type LoaderData = {
   title: string
   token?: string
 }
-
-const DOWNLOAD_OPTIONS: Array<{ format: DocumentDownloadFormat; label: string; description: string }> = [
-  {
-    format: 'archive',
-    label: 'ZIP archive',
-    description: 'Markdown with all attachments bundled',
-  },
-  {
-    format: 'markdown',
-    label: 'Markdown (.md)',
-    description: 'Plain markdown document only',
-  },
-  {
-    format: 'html',
-    label: 'HTML (.html)',
-    description: 'Standalone HTML page rendered via Pandoc',
-  },
-  {
-    format: 'pdf',
-    label: 'PDF (.pdf)',
-    description: 'Portable Document Format export',
-  },
-  {
-    format: 'docx',
-    label: 'Word (.docx)',
-    description: 'Microsoft Word compatible document',
-  },
-]
 
 function normalizeDocumentSearch(search: Record<string, unknown>): DocumentRouteSearch {
   const result: DocumentRouteSearch = {}
@@ -441,7 +622,8 @@ function DocumentClient({
       <DocumentDownloadDialog
         open={showDownloadDialog}
         onOpenChange={setShowDownloadDialog}
-        options={DOWNLOAD_OPTIONS}
+        primaryOptions={PRIMARY_OPTIONS}
+        otherGroups={OTHER_FORMAT_GROUPS}
         onSelect={handleDownload}
         isPending={downloadPending}
       />
