@@ -17,7 +17,12 @@ RUN cargo build --release --bin api
 # -- Runtime stage -----------------------------------------------------
 FROM debian:bullseye-slim AS runtime
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates wget gosu \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        wget \
+        gosu \
+        pandoc \
+        wkhtmltopdf \
     && rm -rf /var/lib/apt/lists/*
 
 ENV RUST_LOG=api=info,axum=info,tower_http=info \

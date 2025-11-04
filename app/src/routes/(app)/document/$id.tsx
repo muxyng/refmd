@@ -1,9 +1,12 @@
 import { createFileRoute, useNavigate, useParams } from '@tanstack/react-router'
-import { Download, History } from 'lucide-react'
+import { Download, History, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
-import { downloadDocumentArchive, fetchDocumentMeta } from '@/entities/document'
+import { Button } from '@/shared/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/shared/ui/dialog'
+
+import { downloadDocumentFile, fetchDocumentMeta, type DocumentDownloadFormat } from '@/entities/document'
 import { buildCanonicalUrl, buildOgImageUrl } from '@/entities/public'
 
 import { documentBeforeLoadGuard, useAuthContext } from '@/features/auth'
@@ -25,10 +28,92 @@ export type DocumentRouteSearch = {
   [key: string]: string | string[] | undefined
 }
 
+function DocumentDownloadDialog({
+  open,
+  onOpenChange,
+  options,
+  onSelect,
+  isPending,
+}: {
+  open: boolean
+  onOpenChange: (value: boolean) => void
+  options: Array<{ format: DocumentDownloadFormat; label: string; description: string }>
+  onSelect: (format: DocumentDownloadFormat) => void | Promise<void>
+  isPending: boolean
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Download document</DialogTitle>
+          <DialogDescription>Select an export format for the current document.</DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-2">
+          {options.map((option) => (
+            <Button
+              key={option.format}
+              variant="outline"
+              className="justify-between px-4 py-3"
+              onClick={() => onSelect(option.format)}
+              disabled={isPending}
+            >
+              <div className="flex flex-col items-start text-left">
+                <span className="text-sm font-medium">{option.label}</span>
+                <span className="text-xs text-muted-foreground">{option.description}</span>
+              </div>
+            </Button>
+          ))}
+        </div>
+        <DialogFooter className="mt-4">
+          {isPending ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground mr-auto">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span>Preparing download…</span>
+            </div>
+          ) : (
+            <div className="mr-auto text-sm text-muted-foreground">Choose a format to start exporting.</div>
+          )}
+          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={isPending}>
+            Cancel
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 type LoaderData = {
   title: string
   token?: string
 }
+
+const DOWNLOAD_OPTIONS: Array<{ format: DocumentDownloadFormat; label: string; description: string }> = [
+  {
+    format: 'archive',
+    label: 'ZIP archive',
+    description: 'Markdown with all attachments bundled',
+  },
+  {
+    format: 'markdown',
+    label: 'Markdown (.md)',
+    description: 'Plain markdown document only',
+  },
+  {
+    format: 'html',
+    label: 'HTML (.html)',
+    description: 'Standalone HTML page rendered via Pandoc',
+  },
+  {
+    format: 'pdf',
+    label: 'PDF (.pdf)',
+    description: 'Portable Document Format export',
+  },
+  {
+    format: 'docx',
+    label: 'Word (.docx)',
+    description: 'Microsoft Word compatible document',
+  },
+]
 
 function normalizeDocumentSearch(search: Record<string, unknown>): DocumentRouteSearch {
   const result: DocumentRouteSearch = {}
@@ -143,6 +228,8 @@ function DocumentClient({
   const { user } = useAuthContext()
   const [showSnapshots, setShowSnapshots] = useState(false)
   const openSnapshots = useCallback(() => setShowSnapshots(true), [])
+  const [showDownloadDialog, setShowDownloadDialog] = useState(false)
+  const [downloadPending, setDownloadPending] = useState(false)
   const { secondaryDocumentId, secondaryDocumentType, showSecondaryViewer, closeSecondaryViewer, openSecondaryViewer } = useSecondaryViewer()
   const { showBacklinks, setShowBacklinks } = useViewContext()
   const { status, doc, awareness, isReadOnly, error: realtimeError } = useCollaborativeDocument(id, shareToken)
@@ -174,19 +261,32 @@ function DocumentClient({
   const loaderTitle = loaderData?.title
   const resolvedTitle = (realtimeTitle && realtimeTitle.trim()) || loaderTitle
 
-  const triggerDownload = useCallback(async () => {
+  const openDownloadDialog = useCallback(() => {
     if (!hasDoc) return
-    try {
-      const filename = await downloadDocumentArchive(id, {
-        token: shareToken,
-        title: resolvedTitle,
-      })
-      toast.success(`Download ready: ${filename}`)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to download document'
-      toast.error(message)
-    }
-  }, [hasDoc, id, shareToken, resolvedTitle])
+    setShowDownloadDialog(true)
+  }, [hasDoc])
+
+  const handleDownload = useCallback(
+    async (format: DocumentDownloadFormat) => {
+      if (!hasDoc) return
+      setDownloadPending(true)
+      try {
+        const filename = await downloadDocumentFile(id, {
+          token: shareToken,
+          title: resolvedTitle,
+          format,
+        })
+        toast.success(`Download ready: ${filename}`)
+        setShowDownloadDialog(false)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to download document'
+        toast.error(message)
+      } finally {
+        setDownloadPending(false)
+      }
+    },
+    [hasDoc, id, shareToken, resolvedTitle],
+  )
 
   useEffect(() => {
     const ensureAction = (
@@ -219,7 +319,7 @@ function DocumentClient({
     const downloadAction: DocumentHeaderAction = {
       id: 'download-document',
       label: 'Download',
-      onSelect: triggerDownload,
+      onSelect: openDownloadDialog,
       disabled: !hasDoc,
       icon: <Download className="h-4 w-4" />,
       tooltip: 'Download document',
@@ -230,7 +330,7 @@ function DocumentClient({
     if (next !== actions) {
       setDocumentActions(next)
     }
-  }, [documentActions, setDocumentActions, openSnapshots, hasDoc, triggerDownload])
+  }, [documentActions, setDocumentActions, openSnapshots, hasDoc, openDownloadDialog])
 
   useEffect(() => {
     if (showBacklinks && showSecondaryViewer) {
@@ -337,6 +437,13 @@ function DocumentClient({
         onOpenChange={setShowSnapshots}
         token={shareToken}
         canRestore={!isReadOnly}
+      />
+      <DocumentDownloadDialog
+        open={showDownloadDialog}
+        onOpenChange={setShowDownloadDialog}
+        options={DOWNLOAD_OPTIONS}
+        onSelect={handleDownload}
+        isPending={downloadPending}
       />
     </div>
   )

@@ -230,7 +230,8 @@ export const getDocumentContent = (data: GetDocumentContentData): CancelableProm
  * @param data The data for the request.
  * @param data.id Document ID
  * @param data.token Share token (optional)
- * @returns DocumentArchiveBinary Document archive
+ * @param data.format Download format (archive|markdown|html|pdf|docx)
+ * @returns DocumentDownloadBinary Document download
  * @throws ApiError
  */
 export const downloadDocument = (data: DownloadDocumentData): CancelablePromise<DownloadDocumentResponse> => {
@@ -241,7 +242,8 @@ export const downloadDocument = (data: DownloadDocumentData): CancelablePromise<
             id: data.id
         },
         query: {
-            token: data.token
+            token: data.token,
+            format: data.format
         },
         errors: {
             401: 'Unauthorized',

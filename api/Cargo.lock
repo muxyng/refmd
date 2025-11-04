@@ -179,6 +179,7 @@ dependencies = [
  "jsonwebtoken",
  "mime_guess",
  "once_cell",
+ "pandoc",
  "password-hash 0.5.0",
  "rand 0.8.5",
  "redis",
@@ -857,7 +858,7 @@ dependencies = [
  "bitflags 2.9.4",
  "cexpr",
  "clang-sys",
- "itertools 0.12.1",
+ "itertools 0.13.0",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -3517,6 +3518,15 @@ dependencies = [
  "ecdsa",
  "elliptic-curve",
  "sha2",
+]
+
+[[package]]
+name = "pandoc"
+version = "0.8.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "463d53d1a77a4291203dbf9d461365609e6857c95bd7d807098bffdc0a02a65c"
+dependencies = [
+ "itertools 0.12.1",
 ]
 
 [[package]]

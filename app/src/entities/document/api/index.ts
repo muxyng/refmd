@@ -27,7 +27,9 @@ import type {
   SnapshotDiffResponse,
   SnapshotRestoreResponse,
   SnapshotSummary,
+  DownloadFormat,
 } from '@/shared/api'
+import { ApiError } from '@/shared/api/client/core/ApiError'
 
 export const documentKeys = {
   all: ['documents'] as const,
@@ -230,9 +232,33 @@ export async function deleteDocument(id: string) {
   return apiDeleteDocument({ id })
 }
 
-export async function downloadDocumentArchive(id: string, options?: { token?: string; title?: string }) {
-  const blob = await apiDownloadDocument({ id, token: options?.token ?? null })
-  const filename = `${sanitizeExportName(options?.title)}.zip`
+export type DocumentDownloadFormat = DownloadFormat
+
+export async function downloadDocumentFile(
+  id: string,
+  options?: { token?: string; title?: string; format?: DocumentDownloadFormat },
+) {
+  const format: DocumentDownloadFormat = options?.format ?? 'archive'
+  let blob: Blob
+  try {
+    blob = await apiDownloadDocument({ id, token: options?.token ?? null, format }) as Blob
+  } catch (error) {
+    if (error instanceof ApiError) {
+      const body = error.body as { message?: unknown } | undefined
+      if (body && typeof body === 'object' && 'message' in body) {
+        const messageValue = (body as { message?: unknown }).message
+        if (typeof messageValue === 'string') {
+          throw new Error(messageValue)
+        }
+      }
+    }
+    throw error
+  }
+  if (!(blob instanceof Blob)) {
+    throw new Error('Unexpected download payload')
+  }
+  const extension = resolveExtension(format)
+  const filename = `${sanitizeExportName(options?.title)}.${extension}`
   const blobUrl = URL.createObjectURL(blob)
   try {
     const link = document.createElement('a')
@@ -246,6 +272,22 @@ export async function downloadDocumentArchive(id: string, options?: { token?: st
     URL.revokeObjectURL(blobUrl)
   }
   return filename
+}
+
+function resolveExtension(format: DocumentDownloadFormat): string {
+  switch (format) {
+    case 'markdown':
+      return 'md'
+    case 'html':
+      return 'html'
+    case 'pdf':
+      return 'pdf'
+    case 'docx':
+      return 'docx'
+    case 'archive':
+    default:
+      return 'zip'
+  }
 }
 
 function sanitizeExportName(input?: string) {

@@ -130,11 +130,7 @@ where
         };
         let diff = compute_text_diff(base_markdown, target_markdown, "snapshot.md");
 
-        Ok(Some(SnapshotDiffResult {
-            diff,
-            base,
-            target,
-        }))
+        Ok(Some(SnapshotDiffResult { diff, base, target }))
     }
 
     async fn load_current_markdown(&self, document_id: Uuid) -> anyhow::Result<String> {

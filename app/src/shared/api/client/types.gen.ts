@@ -109,9 +109,18 @@ export type DocumentDiffResult = {
     old_content?: (string) | null;
 };
 
+export type DocumentDownloadBinary = Blob | File;
+
 export type DocumentListResponse = {
     items: Array<Document>;
 };
+
+export type DownloadDocumentQuery = {
+    format?: DownloadFormat;
+    token?: (string) | null;
+};
+
+export type DownloadFormat = 'archive' | 'markdown' | 'html' | 'pdf' | 'docx';
 
 export type ExecBody = {
     payload?: unknown;
@@ -350,7 +359,7 @@ export type ShareItem = {
 
 export type SnapshotDiffBaseParam = 'auto' | 'current' | 'previous';
 
-export type SnapshotDiffKind = 'current' | 'snapshot';
+export type SnapshotDiffKind = 'Current' | 'Snapshot';
 
 export type SnapshotDiffResponse = {
     base: SnapshotDiffSideResponse;
@@ -546,6 +555,10 @@ export type GetDocumentContentResponse = (unknown);
 
 export type DownloadDocumentData = {
     /**
+     * Download format (archive|markdown|html|pdf|docx)
+     */
+    format?: ((DownloadFormat) | null);
+    /**
      * Document ID
      */
     id: string;
@@ -555,7 +568,7 @@ export type DownloadDocumentData = {
     token?: (string) | null;
 };
 
-export type DownloadDocumentResponse = (DocumentArchiveBinary);
+export type DownloadDocumentResponse = (DocumentDownloadBinary);
 
 export type GetOutgoingLinksData = {
     /**

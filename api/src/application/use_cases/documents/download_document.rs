@@ -1,5 +1,5 @@
 use std::io::Write;
-use std::path::{Component, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use uuid::Uuid;
 
@@ -10,10 +10,135 @@ use crate::application::ports::files_repository::FilesRepository;
 use crate::application::ports::realtime_port::RealtimeEngine;
 use crate::application::ports::share_access_port::ShareAccessPort;
 use crate::application::ports::storage_port::StoragePort;
+use anyhow::Context;
+use pandoc::{self, InputFormat, InputKind, OutputFormat, OutputKind, PandocOption, PandocOutput};
+use tempfile::tempdir;
+use tokio::fs;
+use tokio::task;
 
 pub struct DocumentDownload {
     pub filename: String,
+    pub content_type: String,
     pub bytes: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DocumentDownloadFormat {
+    Archive,
+    Markdown,
+    Html,
+    Pdf,
+    Docx,
+}
+
+impl DocumentDownloadFormat {
+    pub fn extension(&self) -> &'static str {
+        match self {
+            DocumentDownloadFormat::Archive => "zip",
+            DocumentDownloadFormat::Markdown => "md",
+            DocumentDownloadFormat::Html => "html",
+            DocumentDownloadFormat::Pdf => "pdf",
+            DocumentDownloadFormat::Docx => "docx",
+        }
+    }
+
+    pub fn content_type(&self) -> &'static str {
+        match self {
+            DocumentDownloadFormat::Archive => "application/zip",
+            DocumentDownloadFormat::Markdown => "text/markdown; charset=utf-8",
+            DocumentDownloadFormat::Html => "text/html; charset=utf-8",
+            DocumentDownloadFormat::Pdf => "application/pdf",
+            DocumentDownloadFormat::Docx => {
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            }
+        }
+    }
+
+    pub fn file_name(&self, base: &str) -> String {
+        format!("{}.{}", base, self.extension())
+    }
+
+    fn needs_pandoc(&self) -> bool {
+        matches!(
+            self,
+            DocumentDownloadFormat::Html
+                | DocumentDownloadFormat::Pdf
+                | DocumentDownloadFormat::Docx
+        )
+    }
+}
+
+#[derive(Debug)]
+struct DocumentDownloadAssets {
+    safe_title: String,
+    markdown: Vec<u8>,
+    attachments: Vec<DocumentAttachment>,
+}
+
+impl DocumentDownloadAssets {
+    fn new(safe_title: String, markdown: Vec<u8>, attachments: Vec<DocumentAttachment>) -> Self {
+        Self {
+            safe_title,
+            markdown,
+            attachments,
+        }
+    }
+
+    fn file_name(&self, format: DocumentDownloadFormat) -> String {
+        format.file_name(&self.safe_title)
+    }
+
+    fn markdown_bytes(&self) -> &[u8] {
+        &self.markdown
+    }
+
+    fn attachments(&self) -> &[DocumentAttachment] {
+        &self.attachments
+    }
+
+    fn markdown_string(&self) -> anyhow::Result<String> {
+        String::from_utf8(self.markdown.clone()).context("document markdown is not valid UTF-8")
+    }
+}
+
+#[derive(Debug)]
+struct DocumentAttachment {
+    relative_path: String,
+    bytes: Vec<u8>,
+}
+
+impl DocumentAttachment {
+    fn new(relative_path: String, bytes: Vec<u8>) -> Self {
+        Self {
+            relative_path,
+            bytes,
+        }
+    }
+
+    fn relative_path(&self) -> &str {
+        &self.relative_path
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    async fn materialize_under(&self, root: &Path) -> anyhow::Result<()> {
+        let clean_path = Path::new(self.relative_path());
+        if clean_path.as_os_str().is_empty() {
+            return Ok(());
+        }
+        let target = root.join(clean_path);
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)
+                .await
+                .with_context(|| format!("failed to prepare {}", parent.display()))?;
+        }
+        fs::write(&target, self.as_slice())
+            .await
+            .with_context(|| format!("failed to write attachment {}", self.relative_path()))?;
+        Ok(())
+    }
 }
 
 pub struct DownloadDocument<'a, D, F, S, RT, A, SH>
@@ -46,6 +171,7 @@ where
         &self,
         actor: &Actor,
         doc_id: Uuid,
+        format: DocumentDownloadFormat,
     ) -> anyhow::Result<Option<DocumentDownload>> {
         let capability = access::resolve_document(self.access, self.shares, actor, doc_id).await;
         if capability < Capability::View {
@@ -71,7 +197,7 @@ where
         let markdown_bytes = self.storage.read_bytes(markdown_path.as_path()).await?;
 
         let stored_attachments = self.files.list_storage_paths_for_document(doc_id).await?;
-        let mut attachments: Vec<(String, Vec<u8>)> = Vec::new();
+        let mut attachments: Vec<DocumentAttachment> = Vec::new();
         for stored_path in stored_attachments {
             let full_path = self.storage.absolute_from_relative(&stored_path);
             if !full_path.starts_with(&doc_dir) {
@@ -92,33 +218,27 @@ where
             }
             let rel_str = relative.to_string_lossy().replace('\\', "/");
             let data = self.storage.read_bytes(full_path.as_path()).await?;
-            attachments.push((rel_str, data));
+            attachments.push(DocumentAttachment::new(rel_str, data));
         }
 
         let safe_title = sanitize_filename(&document.title);
-        let archive_name = format!("{}.zip", safe_title);
-        let markdown_entry = format!("{}/{}.md", safe_title, safe_title);
-        let mut cursor = std::io::Cursor::new(Vec::new());
-        {
-            let mut zip = zip::ZipWriter::new(&mut cursor);
-            let options = zip::write::FileOptions::default()
-                .compression_method(zip::CompressionMethod::Deflated)
-                .unix_permissions(0o644);
-            zip.start_file(markdown_entry, options)?;
-            zip.write_all(&markdown_bytes)?;
-            for (rel_path, data) in attachments {
-                let entry_path = format!("{}/{}", safe_title, rel_path.trim_start_matches('/'));
-                zip.start_file(entry_path, options)?;
-                zip.write_all(&data)?;
-            }
-            zip.finish()?;
-        }
-        let bytes = cursor.into_inner();
+        let assets = DocumentDownloadAssets::new(safe_title, markdown_bytes, attachments);
+        let bytes = match format {
+            DocumentDownloadFormat::Archive => build_archive(&assets)?,
+            DocumentDownloadFormat::Markdown => assets.markdown_bytes().to_vec(),
+            _ if format.needs_pandoc() => render_with_pandoc(format, &assets)
+                .await
+                .with_context(|| format!("pandoc conversion failed for format {:?}", format))?,
+            _ => unreachable!("covered formats"),
+        };
 
-        Ok(Some(DocumentDownload {
-            filename: archive_name,
+        let download = DocumentDownload {
+            filename: assets.file_name(format),
+            content_type: format.content_type().to_string(),
             bytes,
-        }))
+        };
+
+        Ok(Some(download))
     }
 }
 
@@ -136,4 +256,105 @@ fn sanitize_filename(name: &str) -> String {
         s.truncate(100);
     }
     s
+}
+
+fn build_archive(assets: &DocumentDownloadAssets) -> anyhow::Result<Vec<u8>> {
+    let markdown_entry = format!("{}/{}.md", assets.safe_title, assets.safe_title);
+    let mut cursor = std::io::Cursor::new(Vec::new());
+    {
+        let mut zip = zip::ZipWriter::new(&mut cursor);
+        let options = zip::write::FileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated)
+            .unix_permissions(0o644);
+        zip.start_file(markdown_entry, options)?;
+        zip.write_all(assets.markdown_bytes())?;
+        for attachment in assets.attachments() {
+            let entry_path = format!(
+                "{}/{}",
+                assets.safe_title,
+                attachment.relative_path().trim_start_matches('/')
+            );
+            zip.start_file(entry_path, options)?;
+            zip.write_all(attachment.as_slice())?;
+        }
+        zip.finish()?;
+    }
+    Ok(cursor.into_inner())
+}
+
+async fn render_with_pandoc(
+    format: DocumentDownloadFormat,
+    assets: &DocumentDownloadAssets,
+) -> anyhow::Result<Vec<u8>> {
+    let tmp_dir = tempdir().context("unable to create temporary directory for pandoc")?;
+    let markdown_source = assets.markdown_string()?;
+
+    for attachment in assets.attachments() {
+        attachment.materialize_under(tmp_dir.path()).await?;
+    }
+
+    let resource_dir = tmp_dir.path().to_path_buf();
+    let format_copy = format;
+    let docx_output_path = if matches!(format, DocumentDownloadFormat::Docx) {
+        Some(tmp_dir.path().join("document.docx"))
+    } else {
+        None
+    };
+    let output_bytes = task::spawn_blocking(move || -> anyhow::Result<Vec<u8>> {
+        let mut pandoc_cmd = pandoc::new();
+        pandoc_cmd.set_input(InputKind::Pipe(markdown_source));
+        pandoc_cmd.set_input_format(InputFormat::Markdown, Vec::new());
+        pandoc_cmd.set_output(OutputKind::Pipe);
+        pandoc_cmd.add_option(PandocOption::ResourcePath(vec![resource_dir.clone()]));
+
+        match format_copy {
+            DocumentDownloadFormat::Html => {
+                pandoc_cmd.set_output_format(OutputFormat::Html5, Vec::new());
+                pandoc_cmd.add_option(PandocOption::Standalone);
+            }
+            DocumentDownloadFormat::Pdf => {
+                pandoc_cmd.set_output_format(OutputFormat::Pdf, Vec::new());
+                pandoc_cmd.add_option(PandocOption::Standalone);
+                pandoc_cmd.add_option(PandocOption::PdfEngine(PathBuf::from("wkhtmltopdf")));
+            }
+            DocumentDownloadFormat::Docx => {
+                pandoc_cmd.set_output_format(OutputFormat::Docx, Vec::new());
+                let output_path = docx_output_path
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("docx output path unavailable"))?;
+                pandoc_cmd.set_output(OutputKind::File(output_path.clone()));
+            }
+            _ => return Err(anyhow::anyhow!("unsupported format for pandoc render")),
+        }
+
+        let output = pandoc_cmd.execute().map_err(|err| match err {
+            pandoc::PandocError::PandocNotFound => anyhow::anyhow!(
+                "pandoc executable not found in PATH; install pandoc to enable {} export",
+                format_copy.extension()
+            ),
+            pandoc::PandocError::IoErr(io_err) => anyhow::Error::new(io_err),
+            pandoc::PandocError::Err(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                anyhow::anyhow!(
+                    "pandoc failed (status {}): {}",
+                    output.status,
+                    stderr.trim()
+                )
+            }
+            other => anyhow::Error::new(other),
+        })?;
+        let bytes = match output {
+            PandocOutput::ToBuffer(text) => text.into_bytes(),
+            PandocOutput::ToBufferRaw(raw) => raw,
+            PandocOutput::ToFile(path) => {
+                let data = std::fs::read(&path).map_err(anyhow::Error::new)?;
+                data
+            }
+        };
+        Ok(bytes)
+    })
+    .await?
+    .with_context(|| format!("pandoc conversion failed for format {:?}", format))?;
+
+    Ok(output_bytes)
 }

@@ -396,7 +396,7 @@ function snapshotLabel(snapshot?: SnapshotSummary | null): string {
 }
 
 function diffSideLabel(side: SnapshotDiffResponse['base']): string {
-  if (side.kind === 'current') {
+  if (side.kind === 'Current') {
     return 'Current document'
   }
   return snapshotLabel(side.snapshot ?? null)
