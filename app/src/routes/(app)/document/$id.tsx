@@ -3,12 +3,11 @@ import { Archive, Book, ChevronLeft, ChevronRight, Download, FileDigit, FileText
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
+import { overlayPanelClass } from '@/shared/lib/overlay-classes'
+import { cn } from '@/shared/lib/utils'
 import { Button } from '@/shared/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/shared/ui/dialog'
 import { ScrollArea } from '@/shared/ui/scroll-area'
-
-import { overlayPanelClass } from '@/shared/lib/overlay-classes'
-import { cn } from '@/shared/lib/utils'
 
 import {
   DOWNLOAD_FORMAT_METADATA,
