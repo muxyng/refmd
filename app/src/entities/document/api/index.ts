@@ -527,9 +527,9 @@ export async function downloadDocumentFile(
   options?: { token?: string; title?: string; format?: DocumentDownloadFormat },
 ) {
   const format: DocumentDownloadFormat = options?.format ?? 'archive'
-  let blob: Blob
+  let payload: unknown
   try {
-    blob = await apiDownloadDocument({ id, token: options?.token ?? null, format }) as Blob
+    payload = await apiDownloadDocument({ id, token: options?.token ?? null, format })
   } catch (error) {
     if (error instanceof ApiError) {
       const body = error.body as { message?: unknown } | undefined
@@ -542,6 +542,17 @@ export async function downloadDocumentFile(
     }
     throw error
   }
+  const mimeType = resolveMimeType(format)
+  const blob =
+    payload instanceof Blob
+      ? payload
+      : typeof payload === 'string'
+        ? new Blob([payload], { type: mimeType })
+        : payload && typeof payload === 'object'
+          ? new Blob([JSON.stringify(payload, null, 2)], {
+              type: 'application/json; charset=utf-8',
+            })
+          : undefined
   if (!(blob instanceof Blob)) {
     throw new Error('Unexpected download payload')
   }
@@ -564,6 +575,26 @@ export async function downloadDocumentFile(
 
 function resolveExtension(format: DocumentDownloadFormat): string {
   return DOWNLOAD_FORMAT_METADATA[format]?.extension ?? format
+}
+
+function resolveMimeType(format: DocumentDownloadFormat): string {
+  const extension = resolveExtension(format).toLowerCase()
+  switch (extension) {
+    case 'json':
+      return 'application/json; charset=utf-8'
+    case 'xml':
+    case 'opml':
+    case 'fb2':
+      return 'application/xml; charset=utf-8'
+    case 'html':
+      return 'text/html; charset=utf-8'
+    case 'md':
+      return 'text/markdown; charset=utf-8'
+    case 'tex':
+      return 'application/x-tex; charset=utf-8'
+    default:
+      return 'text/plain; charset=utf-8'
+  }
 }
 
 function sanitizeExportName(input?: string) {

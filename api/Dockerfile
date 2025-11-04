@@ -24,6 +24,7 @@ RUN apt-get update \
         gosu \
         pandoc \
         wkhtmltopdf \
+        fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
 ENV RUST_LOG=api=info,axum=info,tower_http=info \
