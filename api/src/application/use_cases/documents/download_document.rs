@@ -11,10 +11,45 @@ use crate::application::ports::realtime_port::RealtimeEngine;
 use crate::application::ports::share_access_port::ShareAccessPort;
 use crate::application::ports::storage_port::StoragePort;
 use anyhow::Context;
+use once_cell::sync::Lazy;
 use pandoc::{self, InputFormat, InputKind, OutputFormat, OutputKind, PandocOption, PandocOutput};
+use std::sync::Mutex;
 use tempfile::tempdir;
 use tokio::fs;
 use tokio::task;
+
+static PANDOC_WORKDIR_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
+struct WorkingDirGuard {
+    original: Option<std::path::PathBuf>,
+}
+
+impl WorkingDirGuard {
+    fn change_to(target: &Path) -> anyhow::Result<Self> {
+        let original =
+            std::env::current_dir().context("unable to read current working directory")?;
+        std::env::set_current_dir(target).with_context(|| {
+            format!("failed to change working directory to {}", target.display())
+        })?;
+        Ok(Self {
+            original: Some(original),
+        })
+    }
+}
+
+impl Drop for WorkingDirGuard {
+    fn drop(&mut self) {
+        if let Some(original) = self.original.take() {
+            if let Err(error) = std::env::set_current_dir(&original) {
+                tracing::error!(
+                    "failed to restore working directory to {}: {}",
+                    original.display(),
+                    error
+                );
+            }
+        }
+    }
+}
 
 pub struct DocumentDownload {
     pub filename: String,
@@ -182,6 +217,7 @@ struct PandocCommandConfig {
     standalone: bool,
     self_contained: bool,
     pdf_engine: Option<&'static str>,
+    pdf_engine_opts: &'static [&'static str],
 }
 
 impl PandocCommandConfig {
@@ -195,6 +231,7 @@ impl PandocCommandConfig {
                 standalone: true,
                 self_contained: true,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             Html5 => Self {
                 output_format: OutputFormat::Html5,
@@ -202,13 +239,15 @@ impl PandocCommandConfig {
                 standalone: true,
                 self_contained: true,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             Pdf => Self {
                 output_format: OutputFormat::Pdf,
                 destination: PandocOutputKind::Pipe,
                 standalone: true,
-                self_contained: false,
+                self_contained: true,
                 pdf_engine: Some("wkhtmltopdf"),
+                pdf_engine_opts: &["--enable-local-file-access"],
             },
             Docx => Self {
                 output_format: OutputFormat::Docx,
@@ -216,6 +255,7 @@ impl PandocCommandConfig {
                 standalone: false,
                 self_contained: false,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             Latex => Self {
                 output_format: OutputFormat::Latex,
@@ -223,6 +263,7 @@ impl PandocCommandConfig {
                 standalone: true,
                 self_contained: false,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             Beamer => Self {
                 output_format: OutputFormat::Beamer,
@@ -230,6 +271,7 @@ impl PandocCommandConfig {
                 standalone: true,
                 self_contained: false,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             Context => Self {
                 output_format: OutputFormat::Context,
@@ -237,6 +279,7 @@ impl PandocCommandConfig {
                 standalone: true,
                 self_contained: false,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             Man => Self {
                 output_format: OutputFormat::Man,
@@ -244,6 +287,7 @@ impl PandocCommandConfig {
                 standalone: true,
                 self_contained: false,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             MediaWiki => Self {
                 output_format: OutputFormat::MediaWiki,
@@ -251,6 +295,7 @@ impl PandocCommandConfig {
                 standalone: false,
                 self_contained: false,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             Dokuwiki => Self {
                 output_format: OutputFormat::Dokuwiki,
@@ -258,6 +303,7 @@ impl PandocCommandConfig {
                 standalone: false,
                 self_contained: false,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             Textile => Self {
                 output_format: OutputFormat::Textile,
@@ -265,6 +311,7 @@ impl PandocCommandConfig {
                 standalone: false,
                 self_contained: false,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             Org => Self {
                 output_format: OutputFormat::Org,
@@ -272,6 +319,7 @@ impl PandocCommandConfig {
                 standalone: false,
                 self_contained: false,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             Texinfo => Self {
                 output_format: OutputFormat::Texinfo,
@@ -279,6 +327,7 @@ impl PandocCommandConfig {
                 standalone: true,
                 self_contained: false,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             Opml => Self {
                 output_format: OutputFormat::Opml,
@@ -286,6 +335,7 @@ impl PandocCommandConfig {
                 standalone: false,
                 self_contained: false,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             Docbook => Self {
                 output_format: OutputFormat::Docbook,
@@ -293,6 +343,7 @@ impl PandocCommandConfig {
                 standalone: true,
                 self_contained: false,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             OpenDocument => Self {
                 output_format: OutputFormat::OpenDocument,
@@ -300,6 +351,7 @@ impl PandocCommandConfig {
                 standalone: true,
                 self_contained: false,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             Odt => Self {
                 output_format: OutputFormat::Odt,
@@ -307,6 +359,7 @@ impl PandocCommandConfig {
                 standalone: true,
                 self_contained: false,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             Rtf => Self {
                 output_format: OutputFormat::Rtf,
@@ -314,6 +367,7 @@ impl PandocCommandConfig {
                 standalone: true,
                 self_contained: false,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             Epub => Self {
                 output_format: OutputFormat::Epub,
@@ -321,6 +375,7 @@ impl PandocCommandConfig {
                 standalone: true,
                 self_contained: false,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             Epub3 => Self {
                 output_format: OutputFormat::Epub3,
@@ -328,6 +383,7 @@ impl PandocCommandConfig {
                 standalone: true,
                 self_contained: false,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             Fb2 => Self {
                 output_format: OutputFormat::Fb2,
@@ -335,6 +391,7 @@ impl PandocCommandConfig {
                 standalone: true,
                 self_contained: false,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             Asciidoc => Self {
                 output_format: OutputFormat::Asciidoc,
@@ -342,6 +399,7 @@ impl PandocCommandConfig {
                 standalone: false,
                 self_contained: false,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             Icml => Self {
                 output_format: OutputFormat::Icml,
@@ -349,6 +407,7 @@ impl PandocCommandConfig {
                 standalone: true,
                 self_contained: false,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             Slidy => Self {
                 output_format: OutputFormat::Slidy,
@@ -356,6 +415,7 @@ impl PandocCommandConfig {
                 standalone: true,
                 self_contained: true,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             Slideous => Self {
                 output_format: OutputFormat::Slideous,
@@ -363,6 +423,7 @@ impl PandocCommandConfig {
                 standalone: true,
                 self_contained: true,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             Dzslides => Self {
                 output_format: OutputFormat::Dzslides,
@@ -370,6 +431,7 @@ impl PandocCommandConfig {
                 standalone: true,
                 self_contained: true,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             Revealjs => Self {
                 output_format: OutputFormat::Revealjs,
@@ -377,6 +439,7 @@ impl PandocCommandConfig {
                 standalone: true,
                 self_contained: true,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             S5 => Self {
                 output_format: OutputFormat::S5,
@@ -384,6 +447,7 @@ impl PandocCommandConfig {
                 standalone: true,
                 self_contained: true,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             Json => Self {
                 output_format: OutputFormat::Json,
@@ -391,6 +455,7 @@ impl PandocCommandConfig {
                 standalone: false,
                 self_contained: false,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             Plain => Self {
                 output_format: OutputFormat::Plain,
@@ -398,6 +463,7 @@ impl PandocCommandConfig {
                 standalone: false,
                 self_contained: false,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             Commonmark => Self {
                 output_format: OutputFormat::Commonmark,
@@ -405,6 +471,7 @@ impl PandocCommandConfig {
                 standalone: false,
                 self_contained: false,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             CommonmarkX => Self {
                 output_format: OutputFormat::CommonmarkX,
@@ -412,6 +479,7 @@ impl PandocCommandConfig {
                 standalone: false,
                 self_contained: false,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             MarkdownStrict => Self {
                 output_format: OutputFormat::MarkdownStrict,
@@ -419,6 +487,7 @@ impl PandocCommandConfig {
                 standalone: false,
                 self_contained: false,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             MarkdownPhpextra => Self {
                 output_format: OutputFormat::MarkdownPhpextra,
@@ -426,6 +495,7 @@ impl PandocCommandConfig {
                 standalone: false,
                 self_contained: false,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             MarkdownGithub => Self {
                 output_format: OutputFormat::MarkdownGithub,
@@ -433,6 +503,7 @@ impl PandocCommandConfig {
                 standalone: false,
                 self_contained: false,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             Rst => Self {
                 output_format: OutputFormat::Rst,
@@ -440,6 +511,7 @@ impl PandocCommandConfig {
                 standalone: false,
                 self_contained: false,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             Native => Self {
                 output_format: OutputFormat::Native,
@@ -447,6 +519,7 @@ impl PandocCommandConfig {
                 standalone: false,
                 self_contained: false,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
             Haddock => Self {
                 output_format: OutputFormat::Haddock,
@@ -454,6 +527,7 @@ impl PandocCommandConfig {
                 standalone: false,
                 self_contained: false,
                 pdf_engine: None,
+                pdf_engine_opts: &[],
             },
         };
         Some(config)
@@ -711,9 +785,24 @@ async fn render_with_pandoc(
         if config.self_contained {
             pandoc_cmd.add_option(PandocOption::SelfContained);
         }
+        let mut pdf_engine_opts: Vec<String> = config
+            .pdf_engine_opts
+            .iter()
+            .map(|opt| opt.to_string())
+            .collect();
+        if config.pdf_engine.is_some() {
+            pdf_engine_opts.push("--allow".to_string());
+            pdf_engine_opts.push(resource_dir.display().to_string());
+        }
         if let Some(engine) = config.pdf_engine {
             pandoc_cmd.add_option(PandocOption::PdfEngine(PathBuf::from(engine)));
         }
+        for opt in pdf_engine_opts {
+            pandoc_cmd.add_option(PandocOption::PdfEngineOpt(opt));
+        }
+
+        let _lock = PANDOC_WORKDIR_LOCK.lock().unwrap();
+        let _cwd_guard = WorkingDirGuard::change_to(&resource_dir)?;
 
         let output = pandoc_cmd.execute().map_err(|err| match err {
             pandoc::PandocError::PandocNotFound => anyhow::anyhow!(
