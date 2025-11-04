@@ -360,9 +360,9 @@ export const DOWNLOAD_FORMAT_METADATA: Record<DocumentDownloadFormat, DocumentDo
     group: 'Data & Interchange',
   },
   opendocument: {
-    label: 'OpenDocument (.odt)',
+    label: 'OpenDocument Flat XML (.fodt)',
     description: 'Flat OpenDocument Text document',
-    extension: 'odt',
+    extension: 'fodt',
     category: 'other',
     group: 'Office & Rich Text',
   },
@@ -586,6 +586,8 @@ function resolveMimeType(format: DocumentDownloadFormat): string {
     case 'opml':
     case 'fb2':
       return 'application/xml; charset=utf-8'
+    case 'fodt':
+      return 'application/vnd.oasis.opendocument.text'
     case 'html':
       return 'text/html; charset=utf-8'
     case 'md':

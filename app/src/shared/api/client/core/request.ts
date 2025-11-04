@@ -214,28 +214,12 @@ export const getResponseHeader = (response: Response, responseHeader?: string): 
 export const getResponseBody = async (response: Response): Promise<unknown> => {
 	if (response.status !== 204) {
 		try {
-			const disposition = response.headers.get('Content-Disposition');
-			if (disposition && disposition.toLowerCase().includes('attachment')) {
-				return await response.blob();
-			}
-
 			const contentType = response.headers.get('Content-Type');
 			if (contentType) {
-				const binaryTypes = [
-					'application/octet-stream',
-					'application/pdf',
-					'application/zip',
-					'audio/',
-					'image/',
-					'video/',
-					'text/markdown',
-					'text/html',
-				];
+				const binaryTypes = ['application/octet-stream', 'application/pdf', 'application/zip', 'audio/', 'image/', 'video/'];
 				if (contentType.includes('application/json') || contentType.includes('+json')) {
 					return await response.json();
 				} else if (binaryTypes.some(type => contentType.includes(type))) {
-					return await response.blob();
-				} else if (contentType.startsWith('application/')) {
 					return await response.blob();
 				} else if (contentType.includes('multipart/form-data')) {
 					return await response.formData();

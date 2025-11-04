@@ -359,7 +359,7 @@ export type ShareItem = {
 
 export type SnapshotDiffBaseParam = 'auto' | 'current' | 'previous';
 
-export type SnapshotDiffKind = 'Current' | 'Snapshot';
+export type SnapshotDiffKind = 'current' | 'snapshot';
 
 export type SnapshotDiffResponse = {
     base: SnapshotDiffSideResponse;

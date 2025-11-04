@@ -137,7 +137,7 @@ impl DocumentDownloadFormat {
             DocumentDownloadFormat::Texinfo => "texi",
             DocumentDownloadFormat::Opml => "opml",
             DocumentDownloadFormat::Docbook => "xml",
-            DocumentDownloadFormat::OpenDocument => "odt",
+            DocumentDownloadFormat::OpenDocument => "fodt",
             DocumentDownloadFormat::Odt => "odt",
             DocumentDownloadFormat::Rtf => "rtf",
             DocumentDownloadFormat::Epub | DocumentDownloadFormat::Epub3 => "epub",

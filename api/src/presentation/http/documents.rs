@@ -90,6 +90,7 @@ pub struct SnapshotListResponse {
 }
 
 #[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
 pub enum SnapshotDiffKind {
     Current,
     Snapshot,
