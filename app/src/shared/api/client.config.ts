@@ -45,3 +45,41 @@ OpenAPI.HEADERS = async () => {
     return {}
   }
 }
+
+OpenAPI.interceptors.response.use(async (response) => {
+  const contentDisposition = response.headers.get('content-disposition') ?? ''
+  const isAttachment = contentDisposition.toLowerCase().includes('attachment')
+
+  let isDownloadPath = false
+  try {
+    const responseUrl = new URL(response.url)
+    isDownloadPath = /\/download(?:[/?#]|$)/.test(responseUrl.pathname)
+  } catch {
+    isDownloadPath = response.url.includes('/download')
+  }
+
+  if (!isAttachment && !isDownloadPath) {
+    return response
+  }
+
+  const contentType = response.headers.get('content-type') ?? ''
+  const isJson = contentType.includes('application/json') || contentType.includes('+json')
+  const isText = contentType.startsWith('text/')
+  const isAlreadyBinary = ['application/octet-stream', 'application/pdf', 'application/zip'].some((prefix) =>
+    contentType.includes(prefix),
+  )
+
+  if (contentType === '' || isJson || isText || isAlreadyBinary) {
+    return response
+  }
+
+  const blob = await response.blob()
+  const headers = new Headers(response.headers)
+  headers.set('content-type', 'application/octet-stream')
+
+  return new Response(blob, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  })
+})
